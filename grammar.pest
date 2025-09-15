@@ -1,0 +1,15 @@
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+NEWLINE = _{ "\r\n" | "\n" }
+
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+component = { "component" ~ identifier ~ "{" ~ body* ~ "}" }
+body = { state_decl | view_decl | style_decl }
+
+state_decl = { "state" ~ identifier ~ ":" ~ identifier ~ "=" ~ expression }
+expression = @{ (!NEWLINE ~ ANY)+ }
+
+view_decl = { "view" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
+style_decl = { "style" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
+
+file = { SOI ~ component+ ~ EOI }
