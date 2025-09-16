@@ -2,13 +2,15 @@ WHITESPACE = _{ " " | "\t" | NEWLINE }
 NEWLINE = _{ "\r\n" | "\n" }
 
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+string_literal = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
-component = { "component" ~ identifier ~ "{" ~ body* ~ "}" }
-body = { state_decl | view_decl | style_decl }
+type_annotation = { ":" ~ ("String" | "Number" | "Boolean") }
+expression = { string_literal | identifier }
 
-state_decl = { "state" ~ identifier ~ ":" ~ identifier ~ "=" ~ expression }
-expression = @{ (!NEWLINE ~ ANY)+ }
+component = { "component" ~ identifier ~ "{" ~ component_body* ~ "}" }
+component_body = { state_decl | view_decl | style_decl }
 
+state_decl = { "state" ~ identifier ~ type_annotation ~ "=" ~ expression }
 view_decl = { "view" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
 style_decl = { "style" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
 

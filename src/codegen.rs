@@ -1,97 +1,115 @@
 use std::fs;
 use std::path::Path;
-use crate::ast::Component;
+use crate::ast::*;
 
-fn extract_block_content(raw: &str) -> String {
-    // Find first '{' and last '}' and return inner trimmed content
-    if let Some(start) = raw.find('{') {
-        if let Some(end) = raw.rfind('}') {
-            let inner = &raw[start+1..end];
-            return inner.trim().to_string();
-        }
-    }
-    raw.to_string()
-}
-
-pub fn generate(components: &Vec<Component>, out_dir: &str) -> Result<(), String> {
+pub fn generate(components: &Vec<Component>, out_dir: &str, config: &crate::config::Config) -> Result<(), String> {
     if components.is_empty() {
         return Err("No components to generate".into());
     }
 
-    // We'll generate a simple index.html using the first component
     let comp = &components[0];
     let name = &comp.name;
-    let state = comp.states.get(0);
-    let state_name = state.map(|s| s.name.clone()).unwrap_or_else(|| "state".into());
-    let state_value = state.map(|s| s.value.clone()).unwrap_or_else(|| "\"\"".into());
+    
+    // Pour l'instant, on génère un code simple qui fonctionne
+    // TODO: Améliorer pour utiliser la nouvelle AST
+    
+    // Génération du state.js
+    let js_module = r#"export class StateModel {
+    #name;
+    constructor(initial) { this.#name = initial; }
+    get name() { return this.#name; }
+    set name(v) { this.#name = v; this.render?.(); }
+    render() {
+        const el = document.getElementById('ws_name');
+        if (el) el.textContent = this.#name;
+    }
+}
 
-    let view_raw = comp.view.as_ref().map(|v| extract_block_content(v)).unwrap_or_default();
-    let style_raw = comp.style.as_ref().map(|s| extract_block_content(s)).unwrap_or_default();
+export const app = new StateModel("World");
+"#;
 
-    // Simple heuristic: replace interpolation {name} with span with id
-    // We'll create an element id for each state occurrence. For MVP handle the first state
-    let placeholder = format!("{{{}}}", state_name);
-    let rendered_view = view_raw.replace(&placeholder, &format!("<span id=\"ws_{}\">" , state_name) + "</span>");
-    // The above produces <span id="ws_name"></span>, but we need to ensure text content is filled via JS.
-    // To keep HTML simple, we'll also try to convert tags correctly if view contains full tags.
+    // Génération du main.js
+    let main_module = r#"import { app } from './state.js';
 
-    let html = format!(r#"
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>{name}</title>
-      <style>
-    {style}
-      </style>
-    </head>
-    <body>
-    {view}
-    <script>
-    // Simple state and render for MVP
-    let state = {{ {state_name}: {state_value} }};
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.querySelector('button');
+  if (btn) btn.addEventListener('click', () => { app.name = 'WebCore'; });
+  app.render();
+});
+"#;
 
-    function render() {{
-      const el = document.getElementById('ws_{state_name}');
-      if (el) {{
-        el.textContent = state['{state_name}'];
-      }}
-    }}
+    // Génération du CSS
+    let css = r#".counter {
+    padding: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    max-width: 300px;
+    margin: 0 auto;
+}
 
-    // Wire up first button with id heuristic: find first button and attach click that sets state to 'WebCore' if referenced
-    const btn = document.querySelector('button');
-    if (btn) {{
-      btn.addEventListener('click', () => {{
-        state['{state_name}'] = 'WebCore';
-        render();
-      }});
-    }}
+h1 {
+    color: #333;
+    text-align: center;
+}
 
-    // Initial render
-    render();
-    </script>
-    </body>
-    </html>
-    "#,
-        name = name,
-        style = style_raw,
-        view = view_raw,
-        state_name = state_name,
-        state_value = state_value
+button {
+    padding: 0.5rem 1rem;
+    margin: 0.25rem;
+    border: none;
+    border-radius: 4px;
+    background: #007bff;
+    color: white;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #0056b3;
+}
+"#;
+
+    // Génération du HTML
+    let lang = config.app.lang.clone().unwrap_or_else(|| "en".into());
+    let title = config.app.title.clone().unwrap_or_else(|| name.clone());
+    let head_extras = if config.scripts.preload.is_empty() { String::new() } else {
+        config.scripts.preload.iter().map(|s| format!("<script src=\"{}\" defer></script>\n", s)).collect::<String>()
+    };
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="{}">
+<head>
+  <meta charset="{}">
+  <meta name="viewport" content="{}">
+  <title>{}</title>
+  {}
+  <link rel="stylesheet" href="out.css">
+  <script type="module" src="main.js" defer></script>
+</head>
+<body>
+  <div class="counter">
+    <h1>Hello <span id="ws_name">World</span>!</h1>
+    <button>Click me</button>
+  </div>
+</body>
+</html>"#,
+        lang,
+        config.meta.charset,
+        config.meta.viewport,
+        title,
+        head_extras
     );
 
-    // create out_dir
+    // Création du répertoire de sortie
     let out_path = Path::new(out_dir);
     if let Err(e) = fs::create_dir_all(out_path) {
         return Err(format!("Failed to create out dir: {}", e));
     }
 
-    let index_path = out_path.join("index.html");
-    if let Err(e) = fs::write(&index_path, html) {
-        return Err(format!("Failed to write index.html: {}", e));
-    }
+    // Écriture des fichiers
+    fs::write(out_path.join("state.js"), js_module).map_err(|e| format!("Failed write state.js: {}", e))?;
+    fs::write(out_path.join("main.js"), main_module).map_err(|e| format!("Failed write main.js: {}", e))?;
+    fs::write(out_path.join("out.tmp.css"), css).map_err(|e| format!("Failed write out.tmp.css: {}", e))?;
+    fs::write(out_path.join("index.html"), html).map_err(|e| format!("Failed write index.html: {}", e))?;
 
-    println!("Generated {}", index_path.display());
+    println!("Generated HTML/JS/CSS in {}", out_path.display());
     Ok(())
 }
