@@ -1,0 +1,18 @@
+layout MainLayout {
+  header {
+    Brand
+    nav {
+      link "Accueil"
+      link "À propos"
+      link "Compteur"
+    }
+  }
+
+  main {
+    slot
+  }
+
+  footer {
+    text "© 2025 WebCore"
+  }
+}

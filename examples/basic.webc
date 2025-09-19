@@ -1,7 +1,0 @@
-component Hello {
-    state name: String = "World"
-
-    view {
-        <h1>Hello World!</h1>
-    }
-}

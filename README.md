@@ -1,171 +1,124 @@
-![logo_webcore](https://github.com/PrinMeshia/Webcore/blob/main/Webcore.png)
-# WebCore
+# 🌐 WebCore Language
 
-**Un langage unifié pour le développement web**
+## 🚀 Vision
+WebCore (`.webc`) est un langage **ultra-déclaratif** conçu pour **unifier HTML, CSS et JS** dans une seule syntaxe simple.  
+L’objectif est de simplifier radicalement le développement web : plus besoin de jongler entre trois langages, tout passe par WebCore.
 
-WebCore est un langage de programmation qui unifie HTML, CSS et JavaScript dans une seule syntaxe déclarative. L'objectif : simplifier le développement web en éliminant la fragmentation entre les technologies.
+---
 
-## 🚀 État actuel
+## 🎯 Objectifs
 
-**Version :** MVP fonctionnel  
-**Status :** En développement actif  
-**Compilateur :** Rust + Pest parser
+- **Un seul langage** pour le web → `.webc`
+- **Compilateur Rust** robuste et rapide
+- **Interopérabilité** avec CSS/JS externes mais toujours via des déclarations déclaratives
+- **Build moderne** → HTML/CSS/JS minifiés, optimisés, respectant les dernières normes (ECMAScript, CSS WG)
+- **Écosystème complet** (CLI, dev server, docs, IDE support)
 
-### ✅ Ce qui fonctionne
+---
 
-- **Parser Rust** : Grammaire Pest pour analyser les fichiers `.webc`
-- **AST structuré** : Représentation interne des composants, états, vues et styles
-- **Codegen** : Génération de HTML/CSS/JS à partir de l'AST
-- **CLI basique** : `webc build` et `webc dev` fonctionnels
-- **Pipeline de build** : Transformation et optimisation des assets
+## 🛠️ Roadmap
 
-### 📝 Syntaxe actuelle
+### Phase 1 - MVP (2-3 mois)
+- Parser Rust avec grammaire EBNF
+- Compilateur basique → HTML/CSS/JS
+- CLI minimal : `webc build`
+- Un composant qui compile et fonctionne
 
+### Phase 2 - Fonctionnalités (3-4 mois)
+- State management réactif
+- Routing et layout
+- Validation déclarative
+- Hot reload en développement
+
+### Phase 3 - Écosystème (6+ mois)
+- Dev tools et IDE support
+- Migration tools pour React/Vue
+- Documentation complète
+- Community active
+
+---
+
+## 📂 Structure du projet
+
+### Côté compilateur
+```
+webcore-compiler/
+│── Cargo.toml
+│── src/
+│    ├── main.rs
+│    ├── parser.rs
+│    ├── ast.rs
+│    ├── codegen_html.rs
+│    ├── codegen_css.rs
+│    ├── codegen_js.rs
+```
+
+### Côté projet utilisateur
+```
+my-app/
+│── webc.toml
+│── src/
+│    ├── main.webc
+│    ├── components/
+│    ├── layouts/
+│    └── pages/
+│── dist/
+│── public/
+```
+
+---
+
+## 🔑 Points clés
+- **Ultra-déclaratif** → écrire un site complet avec seulement `.webc`
+- **Interopérabilité** → possibilité d’inclure JS/CSS externes mais sans casser le modèle déclaratif
+- **Modernité** → code généré toujours conforme aux dernières normes ECMAScript et CSS
+- **Performances** → Rust pour la vitesse et la fiabilité
+- **Accessibilité** → un langage simple, lisible et intuitif
+
+---
+
+## ✅ Exemple simple
+
+### Code WebCore
 ```webc
-component Hello {
-    state name: String = "World"
-
-    view {
-        <h1>Hello {name}!</h1>
-        <button>Click me</button>
-    }
-
-    style {
-        h1 { color: blue; }
-        button { padding: 0.5rem; }
-    }
+layout default {
+  page "index" {
+    h1 "Hello, WebCore!"
+    p "This is a demo page."
+  }
 }
 ```
 
-## 🛠 Installation et utilisation
-
-### Prérequis
-- Rust 1.70+ avec Cargo
-
-### Build
-```bash
-git clone https://github.com/PrinMeshia/Webcore.git
-cd Webcore
-cargo build --release --bin webc
+### Généré (HTML simplifié)
+```html
+<!DOCTYPE html>
+<html>
+  <body>
+    <h1>Hello, WebCore!</h1>
+    <p>This is a demo page.</p>
+  </body>
+</html>
 ```
 
-### Utilisation
-```bash
-# Compiler un fichier .webc
-./target/release/webc build --input examples/basic.webc --out dist
+---
 
-# Serveur de développement
-./target/release/webc dev --input examples/basic.webc --out dist --port 3000
-```
+## 📌 Pourquoi WebCore ?
+Parce que le web a besoin d’un **nouveau langage unifié**, plus simple, plus rapide, et qui libère les développeurs de la fragmentation HTML/CSS/JS.
 
-## 🏗 Architecture technique
+---
 
-```
-.webc files → Pest Parser → AST → Codegen → HTML/CSS/JS → Transformers → dist/
-```
+## 🚀 Impact attendu
 
-### Composants clés
+### Pour les développeurs
+- Productivité : 3x plus rapide
+- Simplicité : un seul langage à apprendre
+- Performance : apps 10x plus rapides
+- Maintenance : code lisible et maintenable
 
-- **`grammar.pest`** : Grammaire du langage WebCore
-- **`src/parser.rs`** : Parser qui transforme le texte en AST
-- **`src/ast.rs`** : Structures de données pour représenter le code
-- **`src/codegen.rs`** : Génération de code HTML/CSS/JS
-- **`src/transformers.rs`** : Post-traitement (SWC/LightningCSS - stubs)
+### Pour l’industrie
+- Standardisation : un langage pour tout le web
+- Innovation : focus sur la logique, pas sur la technique
+- Accessibilité : apprentissage facilité
+- Évolution : base solide pour le futur
 
-### Pipeline de compilation
-
-1. **Parsing** : Analyse syntaxique avec Pest
-2. **AST** : Construction de l'arbre syntaxique
-3. **Codegen** : Génération de modules ES6 + HTML
-4. **Transformers** : Optimisation JS/CSS (prévu)
-5. **Output** : Fichiers prêts pour le navigateur
-
-## 📁 Structure du projet
-
-```
-Webcore/
-├── src/
-│   ├── bin/webc.rs          # CLI principal
-│   ├── parser.rs            # Parser Pest
-│   ├── ast.rs               # Structures AST
-│   ├── codegen.rs           # Génération de code
-│   ├── transformers.rs      # Post-traitement
-│   └── config.rs            # Configuration TOML
-├── examples/
-│   ├── basic.webc           # Exemple simple
-│   └── state_only.webc      # Exemple minimal
-├── grammar.pest             # Grammaire du langage
-└── webc.toml               # Configuration par défaut
-```
-
-## 🎯 Prochaines étapes
-
-### Court terme (1-2 semaines)
-- [ ] Parser des vues HTML avec interpolation `{variable}`
-- [ ] Parser CSS complet avec sélecteurs et propriétés
-- [ ] Support des expressions binaires dans les états
-- [ ] Tests unitaires pour le parser
-
-### Moyen terme (1-2 mois)
-- [ ] Intégration SWC pour l'optimisation JavaScript
-- [ ] Intégration LightningCSS pour l'optimisation CSS
-- [ ] Hot reload en mode développement
-- [ ] Support des composants multiples
-
-### Long terme (3-6 mois)
-- [ ] Système de routing natif
-- [ ] Gestion d'état globale
-- [ ] Support WebAssembly
-- [ ] Extension VSCode avec syntax highlighting
-
-## 🔧 Développement
-
-### Ajouter une nouvelle fonctionnalité
-
-1. **Modifier la grammaire** : `grammar.pest`
-2. **Étendre l'AST** : `src/ast.rs`
-3. **Mettre à jour le parser** : `src/parser.rs`
-4. **Adapter le codegen** : `src/codegen.rs`
-5. **Tester** : Créer un exemple dans `examples/`
-
-### Exemple de contribution
-
-```bash
-# Créer un exemple de test
-echo 'component Test { state count: Number = 0 }' > examples/test.webc
-
-# Tester la compilation
-cargo run --bin webc -- build --input examples/test.webc --out test_dist
-
-# Vérifier le résultat
-ls test_dist/
-```
-
-## 🤝 Contribution
-
-Les contributions sont les bienvenues ! Voici comment contribuer :
-
-1. **Fork** le projet
-2. **Créer une branche** : `git checkout -b feature/nouvelle-fonctionnalite`
-3. **Commiter** : `git commit -m 'Ajouter nouvelle fonctionnalité'`
-4. **Pusher** : `git push origin feature/nouvelle-fonctionnalite`
-5. **Ouvrir une Pull Request**
-
-### Guidelines
-
-- Code en Rust avec des commentaires clairs
-- Tests pour les nouvelles fonctionnalités
-- Exemples dans `examples/` pour les nouvelles syntaxes
-- Documentation des changements dans les commits
-
-## 📄 Licence
-
-todo
-
-## 🙏 Remerciements
-
-- [Pest](https://pest.rs/) pour le parser
-- [Clap](https://clap.rs/) pour le CLI
-- La communauté Rust pour les outils et l'écosystème
-
-
+---

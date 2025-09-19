@@ -1,3 +1,0 @@
-component Hello {
-    state name: String = "World"
-}
