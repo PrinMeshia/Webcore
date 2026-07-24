@@ -1,17 +1,18 @@
 [theme]
 name = "webcore-docs"
 
+# WebCore 4.0 — dark launch identity (warm-neutral dark + signature orange/amber).
 [theme.colors]
-primary    = "#EA580C"
-secondary  = "#16A34A"
-background = "#F8FAFC"
-surface    = "#FFFFFF"
-border     = "#E2E8F0"
-text       = "#0F172A"
-muted      = "#64748B"
-accent     = "#2563EB"
-danger     = "#DC2626"
-code-bg    = "#0F172A"
+primary    = "#F97316"
+secondary  = "#34D399"
+background = "#0C0D11"
+surface    = "#14161C"
+border     = "#262A33"
+text       = "#ECEEF3"
+muted      = "#949BA9"
+accent     = "#FBBF24"
+danger     = "#F87171"
+code-bg    = "#0E0F14"
 
 [theme.fonts]
 mono = "ui-monospace, SFMono-Regular, 'Fira Code', monospace"

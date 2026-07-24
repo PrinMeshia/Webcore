@@ -1,0 +1,112 @@
+page "i18n" {
+    div class="page-header" {
+        span class="page-header-badge" { "▸ Guide · 4.0" }
+        h1 { "Internationalization" }
+        p class="page-sub" {
+            "Translate with TOML catalogs and "
+            code { "t(\"key\")" }
+            ", switch locale at runtime, and — new in 4.0 — pre-render one static page per locale with "
+            code { "hreflang" }
+            " for first-class international SEO."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Catalogs & t()" }
+        p {
+            "Drop one TOML file per locale in "
+            code { "locales/" }
+            ". Look up keys with "
+            code { "t(\"key\")" }
+            " in text or attributes. Positional params ("
+            code { "\{\{0}}" }
+            ") and plurals ("
+            code { "_one" }
+            " / "
+            code { "_other" }
+            " with "
+            code { "\{\{count}}" }
+            ") are supported."
+        }
+        pre class="code-block" data-lang="toml" {
+"# locales/fr.toml
+welcome   = \"Bienvenue\"
+items_one = \"\{\{count}} article\"
+items_other = \"\{\{count}} articles\"
+
+# locales/en.toml
+welcome   = \"Welcome\"
+items_one = \"\{\{count}} item\"
+items_other = \"\{\{count}} items\""
+        }
+        pre class="code-block" data-lang="webc" {
+"h1 \"\{t(\"welcome\")}\"
+p  \"\{t(\"items\", count)}\"
+a href=\"/cv.pdf\" aria-label=\{t(\"download_cv\")} { \"CV\" }"
+        }
+        div class="callout callout-tip" {
+            strong { "Pre-rendered attributes (#45). " }
+            "Interpolated attributes like "
+            code { "aria-label=\{t(…)}" }
+            " are now written into the static HTML too — good for crawlers, screen readers and the no-JS first paint."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Runtime locale switch" }
+        p {
+            "Call "
+            code { "setLocale(\"en\")" }
+            " to re-render every "
+            code { "t(…)" }
+            " reactively — no reload. The runtime initializes its locale from "
+            code { "<html lang>" }
+            "."
+        }
+    }
+
+    section class="doc-section doc-section-highlight" {
+        h2 {
+            "Static pages per locale "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        p {
+            "Opt in from "
+            code { "webc.toml" }
+            ". The default locale is emitted at the root and every other locale under "
+            code { "/\{locale}/" }
+            ", each with the correct "
+            code { "lang" }
+            ", pre-rendered content, a self-referencing canonical and "
+            code { "hreflang" }
+            " alternates (plus "
+            code { "x-default" }
+            "). The sitemap lists every localized URL."
+        }
+        pre class="code-block" data-lang="toml" {
+"# webc.toml
+[app]
+locale = \"fr\"
+url = \"https://example.com\"
+
+[i18n]
+static = true"
+        }
+        pre class="code-block" data-lang="text" {
+"dist/index.html          →  fr   (/)
+dist/en/index.html       →  en   (/en/)
+  <html lang=\"en\">
+  <link rel=\"canonical\"  href=\"https://example.com/en/\">
+  <link rel=\"alternate\" hreflang=\"fr\" href=\"https://example.com/\">
+  <link rel=\"alternate\" hreflang=\"en\" href=\"https://example.com/en/\">
+  <link rel=\"alternate\" hreflang=\"x-default\" href=\"https://example.com/\">"
+        }
+        div class="callout" {
+            "The runtime restores each page's locale from "
+            code { "<html lang>" }
+            ", so an "
+            code { "/en/" }
+            " page stays in English through hydration — no flash of the wrong language."
+        }
+    }
+}

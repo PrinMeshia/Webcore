@@ -1,15 +1,187 @@
 page "features" {
     div class="page-header" {
+        span class="page-header-badge" { "▸ WebCore 4.0" }
         h1 { "Features" }
         p class="page-sub" {
-            "v3.1 · v3.0 · Store · Validation · SSG · i18n · WASM · Tree-shaking · CSP · Critical CSS · HMR"
+            "Islands · SSG i18n · a11y lints · error codes · CSS source maps · scoped state/CSS · Store · Validation · SSG · WASM · Tree-shaking · CSP · Critical CSS · HMR"
         }
     }
 
     section class="doc-section doc-section-highlight" {
         h2 {
+            "New in WebCore 4.0 "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        p {
+            "The 4.0 line is about shipping less JavaScript, ranking in every language, catching mistakes earlier, and isolating every component — all with zero new runtime dependencies."
+        }
+        div class="table-wrap" {
+            table {
+                thead {
+                    tr { th { "Feature" } th { "What it does" } th { "Issue" } }
+                }
+                tbody {
+                    tr {
+                        td { code { "client=\"idle|visible\"" } }
+                        td { "Partial hydration (islands): a component renders statically and hydrates on idle or scroll." }
+                        td { "#50" }
+                    }
+                    tr {
+                        td { code { "[i18n] static" } }
+                        td { "One static page per locale under /\{locale}/, correct lang, plus hreflang alternates." }
+                        td { "#46" }
+                    }
+                    tr {
+                        td { "SSG attributes" }
+                        td { "Interpolated attributes (aria-label=\{t(…)}) are pre-rendered into the static HTML." }
+                        td { "#45" }
+                    }
+                    tr {
+                        td { code { "webc check --a11y" } }
+                        td { "Static RGAA/WCAG lints: missing alt, label without for, control without an accessible name." }
+                        td { "#49" }
+                    }
+                    tr {
+                        td { "Error codes + hints" }
+                        td { "Stable WCxxxx codes in the terminal and in webc check --json, with contextual hints." }
+                        td { "#48" }
+                    }
+                    tr {
+                        td { "CSS source maps" }
+                        td { "Dev builds emit theme.css.map so DevTools jump from a scoped rule to its .webc line." }
+                        td { "#54" }
+                    }
+                    tr {
+                        td { "Grammar niceties" }
+                        td { "@keyframes names with hyphens (spin-cw) and multi-line comma selector lists." }
+                        td { "#47" }
+                    }
+                    tr {
+                        td { "Component-scoped state & CSS" }
+                        td { "Reactive state is namespaced per component; scoped CSS also matches the component root." }
+                        td { "#42 · #43" }
+                    }
+                }
+            }
+        }
+    }
+
+    section class="doc-section" {
+        h2 {
+            "Islands — partial hydration "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        p {
+            "Add "
+            code { "client=\"idle\"" }
+            " or "
+            code { "client=\"visible\"" }
+            " to a component instance. Its HTML is rendered statically (SSG) and its reactive bindings + "
+            code { "on:mount" }
+            " run only when the browser is idle ("
+            code { "requestIdleCallback" }
+            ") or when it scrolls into view ("
+            code { "IntersectionObserver" }
+            "). Delegated event handlers keep working meanwhile, and projects without the directive emit a byte-identical runtime."
+        }
+        pre class="code-block" data-lang="webc" {
+"page \"home\" {
+    Hero {}
+    HeavyChart client=\"visible\" {}   // hydrates on scroll into view
+    Newsletter client=\"idle\" {}      // hydrates when the browser is idle
+}"
+        }
+        div class="callout callout-tip" {
+            strong { "Static by default. " }
+            "The pre-rendered HTML is always painted immediately — hydration only wires up interactivity later, so heavy widgets below the fold stop blocking first paint."
+        }
+    }
+
+    section class="doc-section" {
+        h2 {
+            "SSG i18n + hreflang "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        p {
+            "Enable "
+            code { "[i18n] static = true" }
+            " in "
+            code { "webc.toml" }
+            ". The default locale is emitted at the site root and every other locale under a "
+            code { "/\{locale}/" }
+            " prefix, each with the correct "
+            code { "lang" }
+            " attribute, its content ("
+            code { "t(…)" }
+            " and interpolated attributes) pre-rendered, and "
+            code { "hreflang" }
+            " alternate links (plus "
+            code { "x-default" }
+            "). The sitemap lists every localized URL and the runtime restores the page's locale from "
+            code { "<html lang>" }
+            " so there is no flash of the wrong language."
+        }
+        pre class="code-block" data-lang="webc" {
+"# webc.toml
+[i18n]
+static = true
+
+# dist/index.html        → fr  (root)
+# dist/en/index.html     → en  (/en/)
+#   <link rel=\"canonical\" href=\"https://site/en/\">
+#   <link rel=\"alternate\" hreflang=\"fr\" href=\"https://site/\">
+#   <link rel=\"alternate\" hreflang=\"en\" href=\"https://site/en/\">"
+        }
+    }
+
+    section class="doc-section" {
+        h2 {
+            "Developer experience "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        h3 { "webc check --a11y" }
+        p {
+            "Static accessibility lints (RGAA / WCAG): images without a textual alternative, labels without a "
+            code { "for" }
+            " nor a wrapped control, and links/buttons without an accessible name. Human output or "
+            code { "--json" }
+            " for editors/CI; warnings by default, "
+            code { "--strict" }
+            " to fail the command."
+        }
+        h3 { "Stable error codes" }
+        p {
+            "Parse errors carry a stable "
+            code { "WCxxxx" }
+            " code — in the terminal ("
+            code { "error[WC1003]" }
+            ") and in "
+            code { "webc check --json" }
+            " — alongside the annotated caret and a contextual hint."
+        }
+        pre class="code-block" data-lang="text" {
+"error[WC1003]: src/app.webc:3:24
+  |
+3 |     routes { \"/\": Home, \"/x\": X }
+  |                        ^ expected string_literal
+  = hint: one route per line — \"/\": Home (no comma)"
+        }
+        h3 { "CSS source maps" }
+        p {
+            "Dev builds write "
+            code { "dist/assets/theme.css.map" }
+            " (a multi-source v3 map) and add a "
+            code { "sourceMappingURL" }
+            " comment, so DevTools jump from a scoped rule straight to the line of its component "
+            code { ".webc" }
+            "."
+        }
+    }
+
+    section class="doc-section" {
+        h2 {
             "v3.1 — LSP quick-fixes (code actions) "
-            span class="version-tag version-tag-new" { "new" }
+            span class="version-tag" { "v3.1" }
         }
         p {
             "Press "

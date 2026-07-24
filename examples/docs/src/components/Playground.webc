@@ -1,0 +1,65 @@
+component Playground {
+    state { tab: String = "counter" }
+    view {
+        div class="pg" {
+            div class="pg-tabs" {
+                button class="pg-tab" class:active={tab == "counter"} on:click={tab = "counter"} { "Counter" }
+                button class="pg-tab" class:active={tab == "island"} on:click={tab = "island"} { "Islands" }
+                button class="pg-tab" class:active={tab == "locale"} on:click={tab = "locale"} { "i18n" }
+            }
+            div class="pg-split" {
+                div class="pg-source" {
+                    @if tab == "counter" {
+                        pre class="code-block" data-lang="webc" {
+"component Counter {
+    state { count: Number = 0 }
+    computed { doubled = count * 2 }
+    view {
+        div {
+            p \"Value: \{count} · doubled: \{doubled}\"
+            button on:click=\{count += 1} { \"+\" }
+            button on:click=\{count = max(0, count - 1)} { \"−\" }
+        }
+    }
+}"
+                        }
+                    } @else if tab == "island" {
+                        pre class="code-block" data-lang="webc" {
+"// Rendered statically; hydrates on scroll (#50)
+page \"home\" {
+    IslandDemo client=\"visible\" {}
+}
+
+component IslandDemo {
+    state { count: Number = 0 }
+    on:mount { markHydrated() }   // runs only after hydration
+    view { button on:click=\{count += 1} { \"+\{count}\" } }
+}"
+                        }
+                    } @else {
+                        pre class="code-block" data-lang="webc" {
+"# locales/fr.toml → welcome = \"Bienvenue\"
+# locales/en.toml → welcome = \"Welcome\"
+
+view {
+    h1 \"\{t(\"welcome\")}\"
+    button on:click=\{setLocale(\"fr\")} { \"Français\" }
+    button on:click=\{setLocale(\"en\")} { \"English\" }
+}"
+                        }
+                    }
+                }
+                div class="pg-preview" {
+                    div class="pg-preview-label" { "Live preview — compiled to vanilla JS" }
+                    @if tab == "counter" {
+                        LiveCounter {}
+                    } @else if tab == "island" {
+                        IslandDemo {}
+                    } @else {
+                        LocaleDemo {}
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,21 @@
+component LocaleDemo {
+    state {
+        greeting: String = "Welcome"
+        desc: String = "Ship one static page per language."
+        langCode: String = "en"
+    }
+    view {
+        div class="locale-demo" {
+            div class="locale-switch" {
+                button class="locale-btn" class:active={langCode == "fr"} on:click={greeting = "Bienvenue"; desc = "Une page statique par langue."; langCode = "fr"} { "Français" }
+                button class="locale-btn" class:active={langCode == "en"} on:click={greeting = "Welcome"; desc = "Ship one static page per language."; langCode = "en"} { "English" }
+                button class="locale-btn" class:active={langCode == "es"} on:click={greeting = "Bienvenido"; desc = "Una página estática por idioma."; langCode = "es"} { "Español" }
+            }
+            div class="locale-output" {
+                span class="locale-lang" { "<html lang=\"{langCode}\">" }
+                h4 { "{greeting}" }
+                p { "{desc}" }
+            }
+        }
+    }
+}

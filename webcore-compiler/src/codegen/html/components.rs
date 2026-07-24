@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 
 use super::elements::generate_elements;
 use super::props::substitute_props;
-use super::utils::{is_void_element, push_close_tag, push_plain_attributes};
+use super::utils::{html_escape, is_void_element, push_close_tag, push_plain_attributes};
 use super::{GenContext, HandlerMapping};
 
 /// Render a component call site: resolve the component definition, substitute props,
@@ -37,6 +37,7 @@ pub(super) fn generate_component_element(
                     || attr.name.starts_with("ref:")
                     || attr.name.starts_with("webc:")
                     || attr.name.starts_with("bind:")
+                    || attr.name == "client"
                     || attr.name == "..."
                 {
                     continue;
@@ -54,6 +55,10 @@ pub(super) fn generate_component_element(
         let static_props: std::collections::BTreeMap<String, String> = attributes
             .iter()
             .filter_map(|a| {
+                // `client` is the island directive, not a prop.
+                if a.name == "client" {
+                    return None;
+                }
                 if let AttributeValue::String(v) = &a.value {
                     Some((a.name.clone(), v.clone()))
                 } else {
@@ -102,7 +107,24 @@ pub(super) fn generate_component_element(
             &substituted
         };
 
-        generate_elements(view, ctx, component_scope_str.as_deref())
+        let (view_html, handlers) = generate_elements(view, ctx, component_scope_str.as_deref())?;
+
+        // Islands (#50): a `client:idle` / `client:visible` directive defers the
+        // reactive hydration of this instance. Wrap its (statically pre-rendered)
+        // output in a marker the runtime uses to schedule hydration; `display:
+        // contents` keeps layout identical to the unwrapped output.
+        if let Some(strategy) = crate::core::ast::island_strategy(attributes) {
+            let wrapped = format!(
+                "<div {}=\"{}\" {}=\"{}\" style=\"display:contents\">{}</div>",
+                attr_names::ISLAND,
+                strategy,
+                attr_names::ISLAND_COMPONENT,
+                html_escape(name),
+                view_html
+            );
+            return Ok((wrapped, handlers));
+        }
+        Ok((view_html, handlers))
     } else {
         // Component not found, generate as HTML element
         let mut result = String::new();

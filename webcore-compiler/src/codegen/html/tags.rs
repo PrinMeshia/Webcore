@@ -234,7 +234,17 @@ pub(super) fn generate_tag_element(
                         result.push_str(&s);
                     }
                 } else {
-                    // Dynamic attribute: bound at runtime via bindAttrs()
+                    // Dynamic attribute: bound at runtime via bindAttrs().
+                    // SSG (#45): when the expression is statically known
+                    // (e.g. `aria-label={t("key")}`, `href={base}`), also emit
+                    // the resolved value as a real attribute so it is present
+                    // in the no-JS HTML — for crawlers, screen readers and the
+                    // first paint. The runtime overwrites it reactively (and on
+                    // locale switch) via `data-webcore-attr-*`.
+                    if let Some(value) = ctx.ssg.and_then(|ssg| ssg.eval_expr(expr)) {
+                        write!(result, " {}=\"{}\"", attr.name, html_escape(&value))
+                            .expect("write! to String is infallible");
+                    }
                     let id = ctx.register_expr(expr, attr.span);
                     write!(
                         result,

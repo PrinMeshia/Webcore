@@ -53,6 +53,63 @@ page "syntax" {
         code { "props default" }
         code { "webc watch" }
         code { "@defer" }
+        code { "client=" }
+        code { "[i18n] static" }
+    }
+
+    section class="doc-section doc-section-highlight" {
+        h2 {
+            "Islands — client=\"idle|visible\" "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        p {
+            "A "
+            code { "client" }
+            " directive on a component instance defers its hydration. The component is rendered statically (SSG); its reactive bindings and "
+            code { "on:mount" }
+            " run only when triggered. Omit it (or use "
+            code { "client=\"load\"" }
+            ") for immediate hydration."
+        }
+        pre class="code-block" data-lang="webc" {
+"page \"home\" {
+    HeavyChart client=\"visible\" {}   // IntersectionObserver (on scroll)
+    Newsletter client=\"idle\" {}      // requestIdleCallback
+    Counter    client=\"load\" {}      // immediate (default)
+}"
+        }
+    }
+
+    section class="doc-section doc-section-highlight" {
+        h2 {
+            "Static i18n — [i18n] static "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        p {
+            "Opt in from "
+            code { "webc.toml" }
+            " to generate one static page per locale (default at the root, others under "
+            code { "/\{locale}/" }
+            ") with per-page "
+            code { "lang" }
+            ", pre-rendered "
+            code { "t(…)" }
+            " and "
+            code { "hreflang" }
+            " alternates. Combine with the usual "
+            code { "locales/*.toml" }
+            " catalogs and "
+            code { "t(\"key\")" }
+            " calls."
+        }
+        pre class="code-block" data-lang="toml" {
+"# webc.toml
+[app]
+locale = \"fr\"
+
+[i18n]
+static = true"
+        }
     }
 
     section class="doc-section" {

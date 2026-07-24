@@ -39,15 +39,37 @@ component DocsShell {
             book: SVG('<path d="M12 7v14"/><path d="M3 5a2 2 0 0 1 2-2h5v16H5a2 2 0 0 1-2-2z"/><path d="M21 5a2 2 0 0 0-2-2h-5v16h5a2 2 0 0 0 2-2z"/>'),
             blocks: SVG('<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/>'),
             zap: SVG('<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/>'),
-            target: SVG('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>')
+            target: SVG('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>'),
+            download: SVG('<path d="M12 3v12"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/>'),
+            island: SVG('<path d="M12 3c1.8 1.8 1.8 4.2 0 6"/><path d="M12 9c-4.2 0-7 2.2-7 5h14c0-2.8-2.8-5-7-5Z"/><path d="M12 14v7"/>'),
+            globe: SVG('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z"/>'),
+            terminal: SVG('<path d="m4 17 6-5-6-5"/><path d="M12 19h8"/>'),
+            sparkles: SVG('<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="m6 6 1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18"/>'),
+            play: SVG('<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/>')
         };
-        const NAV_PAGES = [
-            { href: '/', icon: 'home', label: 'Home' },
-            { href: '/syntax', icon: 'book', label: 'Syntax' },
-            { href: '/components', icon: 'blocks', label: 'Components' },
-            { href: '/features', icon: 'zap', label: 'Features' },
-            { href: '/examples', icon: 'target', label: 'Examples' }
+        // Categorised documentation IA (grouped in the sidebar).
+        const SECTIONS = [
+            { title: 'Getting Started', items: [
+                { href: '/docs', icon: 'home', label: 'Introduction' },
+                { href: '/install', icon: 'download', label: 'Installation' },
+                { href: '/quickstart', icon: 'zap', label: 'Quick Start' }
+            ] },
+            { title: 'Guides', items: [
+                { href: '/islands', icon: 'island', label: 'Islands' },
+                { href: '/i18n', icon: 'globe', label: 'Internationalization' }
+            ] },
+            { title: 'Reference', items: [
+                { href: '/syntax', icon: 'book', label: 'Syntax' },
+                { href: '/cli', icon: 'terminal', label: 'CLI' },
+                { href: '/components', icon: 'blocks', label: 'Components' }
+            ] },
+            { title: 'More', items: [
+                { href: '/features', icon: 'sparkles', label: 'Features' },
+                { href: '/examples', icon: 'target', label: 'Examples' },
+                { href: '/playground', icon: 'play', label: 'Playground' }
+            ] }
         ];
+        const NAV_PAGES = SECTIONS.flatMap(s => s.items);
 
         const sidebar = document.querySelector('.site-sidebar');
         const body = document.querySelector('.site-body');
@@ -60,19 +82,21 @@ component DocsShell {
             if (isHome) { sidebar.innerHTML = ''; return; }
             const ul = document.createElement('ul');
             ul.className = 'sidebar-nav';
-            const docsLabel = document.createElement('div');
-            docsLabel.className = 'sidebar-divider';
-            docsLabel.textContent = 'Documentation';
-            ul.appendChild(docsLabel);
-            NAV_PAGES.forEach(({ href, icon, label }) => {
-                const li = document.createElement('li');
-                const a = document.createElement('a');
-                a.href = href;
-                a.className = 'sidebar-link' + (path === href || (href !== '/' && path.startsWith(href)) ? ' active' : '');
-                a.innerHTML = `<span class="sidebar-icon">${ICONS[icon] || ''}</span><span>${label}</span>`;
-                a.addEventListener('click', e => { e.preventDefault(); webcore_navigate(href); });
-                li.appendChild(a);
-                ul.appendChild(li);
+            SECTIONS.forEach(section => {
+                const divider = document.createElement('div');
+                divider.className = 'sidebar-divider';
+                divider.textContent = section.title;
+                ul.appendChild(divider);
+                section.items.forEach(({ href, icon, label }) => {
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = href;
+                    a.className = 'sidebar-link' + (path === href ? ' active' : '');
+                    a.innerHTML = `<span class="sidebar-icon">${ICONS[icon] || ''}</span><span>${label}</span>`;
+                    a.addEventListener('click', e => { e.preventDefault(); webcore_navigate(href); });
+                    li.appendChild(a);
+                    ul.appendChild(li);
+                });
             });
             // Section headings (TOC)
             const headings = document.querySelectorAll('.doc-section h2');
@@ -192,8 +216,8 @@ component DocsShell {
 
             // Prev / Next page navigation
             document.querySelectorAll('.page-nav-dynamic').forEach(el => el.remove());
-            const ORDER = ['/', '/syntax', '/components', '/features', '/examples'];
-            const LABELS = { '/': 'Home', '/syntax': 'Syntax', '/components': 'Components', '/features': 'Features', '/examples': 'Examples' };
+            const ORDER = ['/', ...NAV_PAGES.map(p => p.href)];
+            const LABELS = Object.fromEntries([['/', 'Home'], ...NAV_PAGES.map(p => [p.href, p.label])]);
             const idx = ORDER.indexOf(path);
             if (idx >= 0) {
                 const navEl = document.createElement('nav');
@@ -208,6 +232,16 @@ component DocsShell {
                 }
                 const main = document.querySelector('.site-main');
                 if (main) main.appendChild(navEl);
+            }
+
+            // Scroll-reveal for landing sections (respects reduced motion).
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                document.querySelectorAll('.reveal').forEach(el => el.classList.add('in'));
+            } else {
+                const revObs = new IntersectionObserver((entries, o) => {
+                    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); o.unobserve(e.target); } });
+                }, { rootMargin: '0px 0px -8% 0px' });
+                document.querySelectorAll('.reveal:not(.in)').forEach(el => revObs.observe(el));
             }
 
             // Rebuild sidebar
@@ -231,13 +265,7 @@ component DocsShell {
         topBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 
         // ── Command palette (Cmd/Ctrl + K) ────────────────────────────────────
-        const PAGES = [
-            { href: '/', label: 'Home' },
-            { href: '/syntax', label: 'Syntax' },
-            { href: '/components', label: 'Components' },
-            { href: '/features', label: 'Features' },
-            { href: '/examples', label: 'Examples' }
-        ];
+        const PAGES = [{ href: '/', label: 'Home' }, ...NAV_PAGES.map(p => ({ href: p.href, label: p.label }))];
         const slugify = t => t.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').replace(/-+$/, '');
         let SEARCH_INDEX = null, indexing = false;
         const buildIndex = async () => {

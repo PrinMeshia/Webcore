@@ -15,7 +15,7 @@ use crate::core::diag::{CheckReport, Diagnostic, Severity};
 /// and prop type mismatches. In JSON mode all output (including failures)
 /// goes to stdout as one JSON line and the returned error string is empty —
 /// the caller only uses it for the exit code.
-pub(crate) fn check_project(json: bool) -> Result<(), String> {
+pub(crate) fn check_project(json: bool, a11y: bool, strict: bool) -> Result<(), String> {
     if !json {
         println!("🔍 Checking WebCore project...");
     }
@@ -236,22 +236,37 @@ pub(crate) fn check_project(json: bool) -> Result<(), String> {
         check_cycles(component_name, &document, &mut Vec::new(), &mut issues);
     }
 
+    // ── Accessibility lints (opt-in via `--a11y`) ─────────────────────────────
+    let a11y_issues = if a11y {
+        super::a11y::lint(&document)
+    } else {
+        Vec::new()
+    };
+
+    // Default checks are hard errors; accessibility findings are warnings that
+    // only fail the command under `--strict`.
+    let exit_ok = issues.is_empty() && (!strict || a11y_issues.is_empty());
+    let has_a11y = !a11y_issues.is_empty();
+    let combined: Vec<Diagnostic> = issues.into_iter().chain(a11y_issues).collect();
+
     // ── Report ───────────────────────────────────────────────────────────────
     if json {
-        let report = CheckReport::new(issues);
-        println!("{}", report.to_json());
-        return if report.ok {
-            Ok(())
-        } else {
-            Err(String::new())
-        };
+        println!(
+            "{}",
+            CheckReport {
+                ok: exit_ok,
+                diagnostics: combined,
+            }
+            .to_json()
+        );
+        return if exit_ok { Ok(()) } else { Err(String::new()) };
     }
 
     let pages = document.pages.len();
     let components = document.components.len();
     let layouts = document.layouts.len();
 
-    if issues.is_empty() {
+    if combined.is_empty() {
         println!(
             "✅  {} page{}, {} component{}, {} layout{} — no issues found",
             pages,
@@ -261,20 +276,38 @@ pub(crate) fn check_project(json: bool) -> Result<(), String> {
             layouts,
             if layouts == 1 { "" } else { "s" },
         );
+        return Ok(());
+    }
+
+    let glyph = if exit_ok { "⚠️ " } else { "❌" };
+    println!(
+        "{glyph} {} issue{} found:\n",
+        combined.len(),
+        if combined.len() == 1 { "" } else { "s" }
+    );
+    for issue in &combined {
+        let loc = match (&issue.file, issue.line) {
+            (Some(f), Some(l)) => format!("{f}:{l}:{}  ", issue.col.unwrap_or(0)),
+            _ => String::new(),
+        };
+        let sev = if matches!(issue.severity, Severity::Warning) {
+            "warning"
+        } else {
+            "error"
+        };
+        println!("  [{sev}] {loc}{}", issue.message);
+    }
+
+    if exit_ok {
+        if has_a11y {
+            println!("\n(avertissements d'accessibilité — ajoutez --strict pour échouer)");
+        }
         Ok(())
     } else {
-        println!(
-            "❌  {} issue{} found:\n",
-            issues.len(),
-            if issues.len() == 1 { "" } else { "s" }
-        );
-        for issue in &issues {
-            println!("  {}", issue.message);
-        }
         Err(format!(
-            "\n{} issue{} — fix before building",
-            issues.len(),
-            if issues.len() == 1 { "" } else { "s" }
+            "\n{} problème{} à corriger",
+            combined.len(),
+            if combined.len() == 1 { "" } else { "s" }
         ))
     }
 }
@@ -284,7 +317,8 @@ fn diag_from_load_error(err: LoadError) -> Diagnostic {
     match err {
         LoadError::Parse(pe) => Diagnostic {
             severity: Severity::Error,
-            code: "parse",
+            // Stable `WCxxxx` code when the failure matches a known pattern.
+            code: pe.code(),
             message: pe.concise_message(),
             file: pe.file.as_ref().map(|p| p.display().to_string()),
             line: pe.span.as_ref().map(|s| s.line),

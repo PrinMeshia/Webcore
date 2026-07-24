@@ -243,36 +243,56 @@ fn scope_single_selector(selector: &str, scope_id: &str) -> String {
         return selector[8..selector.len() - 1].to_string();
     }
 
-    // Handle pseudo-elements - they must come after the scope attribute
-    // e.g., "button::before" -> "[data-v=xxx] button::before"
-    if let Some(pos) = selector.find("::") {
-        let (base, pseudo) = selector.split_at(pos);
-        return format!("[data-v=\"{scope_id}\"] {base}{pseudo}");
-    }
-
-    // Handle pseudo-classes that should stay attached
-    // e.g., "button:hover" -> "[data-v=xxx] button:hover"
-    // But ":first-child" at start means scope the container
-    if selector.starts_with(':') && !selector.starts_with("::") {
-        return format!("[data-v=\"{scope_id}\"]{selector}");
-    }
-
-    // Standard case: prepend scope
-    format!("[data-v=\"{scope_id}\"] {selector}")
+    // Every element rendered by the component carries the scope attribute, so we
+    // append it to the *subject* (rightmost) compound of the selector. This
+    // matches the component's own root element as well as its descendants — a
+    // descendant-combinator prefix like `[data-v] .foo` would miss the root (#43).
+    append_scope(selector, scope_id)
 }
 
-/// Generate all scoped CSS for a document
-#[must_use]
-pub(crate) fn generate_all_scoped_css(document: &WebCoreDocument) -> String {
-    let mut css = String::new();
+/// Append `[data-v="…"]` to the subject (rightmost) compound of a single,
+/// comma-free selector, inserted before any pseudo-class/element on that
+/// compound. Examples:
+/// - `button`            → `button[data-v="…"]`
+/// - `.a .b`             → `.a .b[data-v="…"]`
+/// - `.a > .b:hover`     → `.a > .b[data-v="…"]:hover`
+/// - `button::before`    → `button[data-v="…"]::before`
+/// - `:hover`            → `[data-v="…"]:hover`
+fn append_scope(selector: &str, scope_id: &str) -> String {
+    let attr = format!("[data-v=\"{scope_id}\"]");
+    let chars: Vec<char> = selector.chars().collect();
 
-    css.push_str("/* WebCore Scoped Styles */\n\n");
-
-    for component in document.components.values() {
-        css.push_str(&generate_scoped_css(component));
+    // Subject starts just after the last top-level combinator (space, >, +, ~),
+    // ignoring anything inside `(…)` or `[…]`.
+    let mut depth = 0i32;
+    let mut subject_start = 0usize;
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            ' ' | '>' | '+' | '~' if depth == 0 => subject_start = i + 1,
+            _ => {}
+        }
     }
 
-    css
+    // Within the subject, insert the attribute before the first pseudo (`:`).
+    let mut pdepth = 0i32;
+    let mut insert_at = chars.len();
+    for (i, &c) in chars.iter().enumerate().skip(subject_start) {
+        match c {
+            '(' | '[' => pdepth += 1,
+            ')' | ']' => pdepth -= 1,
+            ':' if pdepth == 0 => {
+                insert_at = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let prefix: String = chars[..insert_at].iter().collect();
+    let suffix: String = chars[insert_at..].iter().collect();
+    format!("{prefix}{attr}{suffix}")
 }
 
 /// Generate the global (non-component) CSS: theme variables + base styles.
@@ -336,15 +356,97 @@ p { margin: 0 0 1em; }
     css
 }
 
-/// Generate combined CSS: theme variables + scoped component styles
+/// One CSS→`.webc` line correspondence for the dev source map (#54).
+pub(crate) struct CssLineMap {
+    /// 0-indexed line in the generated stylesheet.
+    pub out_line: u32,
+    /// Owning component (resolved to a `.webc` file via `source_files`).
+    pub component: String,
+    /// 1-indexed line of the rule in its `.webc` source.
+    pub src_line: u32,
+}
+
+/// Generate combined CSS: theme variables + scoped component styles.
+/// Test-only convenience wrapper — the build uses [`generate_combined_css_mapped`]
+/// (which also yields the dev source-map data).
+#[cfg(test)]
 #[must_use]
 pub(crate) fn generate_combined_css(theme: Option<&Theme>, document: &WebCoreDocument) -> String {
+    generate_combined_css_mapped(theme, document).0
+}
+
+/// Same output as [`generate_combined_css`], plus a per-rule
+/// stylesheet-line → `.webc`-line map used to emit a dev CSS source map (#54).
+/// The emitted bytes are identical to `generate_combined_css`, so nothing else
+/// in the pipeline changes.
+pub(crate) fn generate_combined_css_mapped(
+    theme: Option<&Theme>,
+    document: &WebCoreDocument,
+) -> (String, Vec<CssLineMap>) {
     let mut css = generate_global_css(theme);
+    let mut maps: Vec<CssLineMap> = Vec::new();
+    // 0-indexed line where the next character will be written.
+    let mut line = css.matches('\n').count() as u32;
 
-    // Scoped component styles
-    css.push_str(&generate_all_scoped_css(document));
+    // Mirror of `generate_all_scoped_css`, with output-line tracking.
+    css.push_str("/* WebCore Scoped Styles */\n\n");
+    line += 2;
 
-    css
+    for component in document.components.values() {
+        if component.style.is_empty() {
+            continue;
+        }
+        let scope_id = generate_scope_id(&component.name);
+        let name = component.name.clone();
+        css.push_str(&format!("/* Component: {name} */\n"));
+        line += 1;
+
+        for item in &component.style {
+            match item {
+                StyleItem::Rule(rule) => {
+                    maps.push(CssLineMap {
+                        out_line: line,
+                        component: name.clone(),
+                        src_line: rule.span.line,
+                    });
+                    let chunk = emit_scoped_rule(rule, &scope_id, "");
+                    line += chunk.matches('\n').count() as u32;
+                    css.push_str(&chunk);
+                }
+                StyleItem::Media { query, rules, span } => {
+                    maps.push(CssLineMap {
+                        out_line: line,
+                        component: name.clone(),
+                        src_line: span.line,
+                    });
+                    css.push_str(&format!("@media {query} {{\n"));
+                    line += 1;
+                    for rule in rules {
+                        maps.push(CssLineMap {
+                            out_line: line,
+                            component: name.clone(),
+                            src_line: rule.span.line,
+                        });
+                        let chunk = emit_scoped_rule(rule, &scope_id, "  ");
+                        line += chunk.matches('\n').count() as u32;
+                        css.push_str(&chunk);
+                    }
+                    css.push_str("}\n");
+                    line += 1;
+                }
+                StyleItem::Keyframes { name: kf, steps } => {
+                    // @keyframes have no source span — emit without a mapping.
+                    let chunk = emit_keyframes(kf, steps);
+                    line += chunk.matches('\n').count() as u32;
+                    css.push_str(&chunk);
+                }
+            }
+        }
+        css.push('\n');
+        line += 1;
+    }
+
+    (css, maps)
 }
 
 #[must_use]
@@ -396,16 +498,18 @@ mod tests {
         assert!(id1.starts_with("wc-"));
     }
 
+    // The scope attribute is appended to the subject compound (Vue-style) so it
+    // matches the component root as well as its descendants (#43).
     #[test]
     fn test_scope_simple_selector() {
         let result = scope_selector("button", "wc-abc123");
-        assert_eq!(result, "[data-v=\"wc-abc123\"] button");
+        assert_eq!(result, "button[data-v=\"wc-abc123\"]");
     }
 
     #[test]
     fn test_scope_class_selector() {
         let result = scope_selector(".my-class", "wc-abc123");
-        assert_eq!(result, "[data-v=\"wc-abc123\"] .my-class");
+        assert_eq!(result, ".my-class[data-v=\"wc-abc123\"]");
     }
 
     #[test]
@@ -413,20 +517,27 @@ mod tests {
         let result = scope_selector("h1, h2, h3", "wc-abc123");
         assert_eq!(
             result,
-            "[data-v=\"wc-abc123\"] h1, [data-v=\"wc-abc123\"] h2, [data-v=\"wc-abc123\"] h3"
+            "h1[data-v=\"wc-abc123\"], h2[data-v=\"wc-abc123\"], h3[data-v=\"wc-abc123\"]"
         );
     }
 
     #[test]
     fn test_scope_pseudo_class() {
         let result = scope_selector("button:hover", "wc-abc123");
-        assert_eq!(result, "[data-v=\"wc-abc123\"] button:hover");
+        assert_eq!(result, "button[data-v=\"wc-abc123\"]:hover");
     }
 
     #[test]
     fn test_scope_pseudo_element() {
         let result = scope_selector("button::before", "wc-abc123");
-        assert_eq!(result, "[data-v=\"wc-abc123\"] button::before");
+        assert_eq!(result, "button[data-v=\"wc-abc123\"]::before");
+    }
+
+    #[test]
+    fn test_scope_descendant_selector() {
+        // Subject (last compound) gets the attribute; the ancestor is context.
+        let result = scope_selector(".a > .b", "wc-abc123");
+        assert_eq!(result, ".a > .b[data-v=\"wc-abc123\"]");
     }
 
     #[test]

@@ -9,6 +9,200 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [4.0.0]
+
+- **Source maps CSS → `.webc`** (#54) — en mode dev, `webc build` écrit un
+  `dist/assets/theme.css.map` (source map v3 multi-sources) et ajoute un
+  commentaire `/*# sourceMappingURL */` à `theme.css`. Chaque règle scopée
+  pointe vers la ligne d'origine de son composant `.webc` (contenu embarqué via
+  `sourcesContent`), pour déboguer dans les DevTools. Le CSS dev est servi tel
+  que généré (toujours validé par LightningCSS) pour que le mapping reste exact ;
+  le build prod reste minifié, sans source map (comme pour le JS).
+
+- **Grammaire : `@keyframes` avec tiret + sélecteurs multi-lignes** (#47) — le nom
+  d'un bloc `@keyframes` accepte désormais les tirets (`@keyframes spin-cw`), comme
+  le CSS. Une liste de sélecteurs séparés par des virgules peut s'étendre sur
+  plusieurs lignes (`.a:hover,\n.a.active { … }`) — chaque partie reste scopée
+  indépendamment.
+
+- **Messages d'erreur enrichis + codes stables** (#48) — les erreurs de parsing
+  portent un code stable `WCxxxx` (ex. `error[WC1003]`) réutilisable dans les
+  éditeurs/CI (sortie `--json`), en plus de l'extrait de code annoté (caret) et du
+  hint contextuel déjà présents. De nouveaux hints couvrent d'autres cas courants
+  (noms d'@keyframes, types d'état, attributs sans valeur, routes). *(Les source
+  maps CSS→`.webc` restent un chantier séparé, non inclus dans ce lot.)*
+
+- **PWA installable + hors-ligne** — une section `[pwa]` dans `webc.toml`
+  (opt-in) fait générer par `webc build`, à la racine de `dist/`, un
+  `manifest.webmanifest` (nom, couleurs, `display`, icônes fingerprintées) et un
+  `sw.js` (service worker offline, network-first + fallback cache). Le manifeste,
+  la `theme-color` et les balises Apple web-app (+ `apple-touch-icon`) sont
+  injectés dans chaque `<head>`, et l'enregistrement du service worker est ajouté
+  au runtime partagé. Le site devient installable (mobile/desktop) et consultable
+  hors-ligne. Icônes attendues dans `public/` (`icon-192.png`, `icon-512.png`,
+  `icon-maskable.png`, `apple-touch-icon.png`).
+
+- **`webc build --prod` / `--dev`** — override du mode de build en ligne de
+  commande, indépendamment du `mode` déclaré dans `webc.toml`. On garde
+  `mode = "dev"` (serveur de dev lisible, source maps) et on produit un build
+  déployable minifié avec `webc build --prod` (minification HTML/CSS/JS,
+  critical CSS inliné, renommage d'identifiants, SRI) — sans éditer la config.
+
+- **`webc check --a11y`** (#49) — lints d'accessibilité (RGAA/WCAG) intégrés au
+  compilateur : `<img>` sans alternative textuelle (1.1), `<label>` sans `for`
+  ni champ imbriqué (11.1), `<a>`/`<button>` sans intitulé accessible (6.1) —
+  avec position `fichier:ligne:colonne`. Les alternatives correctes (`alt=""`
+  décoratif, `aria-hidden`, `aria-label`, champ imbriqué…) ne sont pas signalées.
+  Sortie humaine ou `--json` (éditeurs/CI) ; avertissements par défaut, `--strict`
+  pour faire échouer la commande.
+
+- **Hydratation partielle (islands)** (#50) — directive `client="idle"` /
+  `client="visible"` sur une instance de composant pour différer sa réactivité.
+  Le composant est rendu statiquement (SSG) puis « hydraté » seulement au moment
+  choisi : `visible` via `IntersectionObserver` (au défilement à l'écran),
+  `idle` via `requestIdleCallback` (navigateur inoccupé). Tant que l'île n'est
+  pas hydratée, ses liaisons réactives (`bind`/`bindAttrs`/`bindIf`/`bindFor`/
+  classes) et son `on:mount` ne s'exécutent pas — le HTML pré-rendu reste
+  affiché et les gestionnaires d'événements (délégués au niveau du document)
+  continuent de fonctionner. La machinerie d'îles est entièrement tree-shakée
+  pour les projets qui n'utilisent pas la directive (runtime inchangé). Idéal
+  pour les composants lourds sous la ligne de flottaison (canvas, WebGL, listes).
+
+- **SSG i18n : une page statique par locale + `hreflang`** (#46) — option
+  d'activation `[i18n] static = true` dans `webc.toml`. `webc build` génère alors
+  une page par locale : la locale par défaut à la racine (`/`, `/about/`) et
+  chaque autre locale sous un préfixe `/{locale}/` (`/en/`, `/en/about/`). Chaque
+  page porte le bon `lang`, son contenu (`t(...)` et attributs interpolés) est
+  pré-rendu dans la langue voulue, et des balises
+  `<link rel="alternate" hreflang="…">` (une par locale + `x-default`) sont
+  émises. Le `sitemap.xml` liste toutes les URL localisées. Le runtime initialise
+  désormais sa locale depuis `<html lang>`, évitant le flash de langue à
+  l'hydratation d'une page `/en/`. (Les collections dynamiques `:slug` restent en
+  locale par défaut pour l'instant.)
+
+- **Attributs interpolés pré-rendus en SSG** (#45) — un attribut dynamique dont
+  l'expression est statiquement connue (`aria-label={t("nav_cv")}`,
+  `href={base}`…) est désormais émis avec sa valeur résolue dans le HTML généré,
+  à côté de la liaison `data-webcore-attr-*`. L'attribut est ainsi présent pour
+  les moteurs de recherche, les lecteurs d'écran et le premier rendu (sans JS) ;
+  le runtime continue de le mettre à jour de façon réactive (changement de
+  langue, état). Sans contexte SSG ou pour une expression non résoluble, seule
+  la liaison runtime est émise (aucune valeur statique erronée).
+
+### Corrections
+
+- **État réactif scopé par composant** (#42) — le runtime utilisait un store
+  global indexé par le nom brut de la variable d'état, si bien que deux
+  composants déclarant un état de même nom (`open`) se marchaient dessus (ex. un
+  menu burger qui ouvrait aussi une palette de commandes). Une passe AST
+  (`core::scope`) exécutée avant la génération réécrit désormais chaque référence
+  à l'état/computed *local* d'un composant vers une clé unique `<Composant>__<var>`
+  — y compris dans le code `on:mount` (`S.get('x')` / `S.set('x', …)`). Le
+  `$store` global reste partagé. Golden test de non-collision ajouté.
+  
+- **CSS scopé sur l'élément racine du composant** (#43) — le scoping préfixait
+  les sélecteurs par `[data-v="…"] .foo` (combinateur descendant), qui ne peut
+  pas cibler l'élément *racine* du composant. Comme chaque élément rendu porte
+  l'attribut de scope, on l'**appose** désormais au sujet du sélecteur (façon
+  Vue) : `.foo` → `.foo[data-v="…"]`, `.a > .b` → `.a > .b[data-v="…"]`. Racine
+  **et** descendants couverts. Le contournement « CSS en global » n'est plus
+  nécessaire.
+  
+- **Harnais de non-régression du pipeline dev + prod** (#44) — chaque exemple est
+  buildé en **dev ET prod** dans les tests d'intégration, avec des invariants qui
+  verrouillent les classes de bugs rencontrées : aucune closure `()=>…` ne fuit
+  dans le HTML, aucune closure `_e` double-emballée (`()=>()=>`), JS valide
+  (`node --check`), builds déterministes.
+
+---
+
+## [3.3.0]
+
+- **PWA installable + hors-ligne** — une section `[pwa]` dans `webc.toml`
+  (opt-in) fait générer par `webc build`, à la racine de `dist/`, un
+  `manifest.webmanifest` (nom, couleurs, `display`, icônes fingerprintées) et un
+  `sw.js` (service worker offline, network-first + fallback cache). Le manifeste,
+  la `theme-color` et les balises Apple web-app (+ `apple-touch-icon`) sont
+  injectés dans chaque `<head>`, et l'enregistrement du service worker est ajouté
+  au runtime partagé. Le site devient installable (mobile/desktop) et consultable
+  hors-ligne. Icônes attendues dans `public/` (`icon-192.png`, `icon-512.png`,
+  `icon-maskable.png`, `apple-touch-icon.png`).
+
+- **`webc build --prod` / `--dev`** — override du mode de build en ligne de
+  commande, indépendamment du `mode` déclaré dans `webc.toml`. On garde
+  `mode = "dev"` (serveur de dev lisible, source maps) et on produit un build
+  déployable minifié avec `webc build --prod` (minification HTML/CSS/JS,
+  critical CSS inliné, renommage d'identifiants, SRI) — sans éditer la config.
+
+### Nettoyage interne
+
+- **Noms de `meta` avec tiret** — la clé d'une balise `meta key="…"` dans un bloc
+  `head { }` accepte désormais les tirets, en plus des lettres, chiffres, `_` et `:`.
+  Cela autorise les noms de meta standard tels que `theme-color`,
+  `apple-mobile-web-app-capable` ou `msapplication-TileColor`. Les namespaces à deux
+  points (`og:title`, `twitter:card`) restent inchangés.
+
+- **URL canoniques & images sociales absolues** — quand `[app] url` est défini,
+  chaque page reçoit un `<link rel="canonical">` **et un `meta og:url`** (URL +
+  route ; la page `404` en est exclue), et les `meta og:image` / `twitter:image`
+  en chemin racine (`/…`) sont réécrites en **URLs absolues** — indispensable
+  pour que LinkedIn / Slack / Twitter affichent l'aperçu. Le fingerprint d'asset
+  reste appliqué.
+
+- **Fichiers SEO à la racine du build** — `webc build` génère désormais
+  automatiquement, à la racine de `dist/` (et non sous `/assets/`) :
+  - **`robots.txt`** (toujours) — autorise l'indexation et pointe vers le
+    sitemap quand une URL de site est configurée ;
+  - **`sitemap.xml`** — la liste des routes en URLs absolues, généré quand
+    `[app] url = "https://…"` est présent dans `webc.toml` (la page `404` en est
+    exclue) ;
+  - **`404.html`** — copie de la page `404` du projet à la racine, là où les
+    hébergeurs statiques (GitHub Pages, Netlify, Cloudflare Pages…) la servent
+    sur une route inconnue.
+
+### Corrections
+
+- **Fingerprint des images de sous-dossiers ignoré** — les images sous
+  `public/<sous-dossier>/` (ex. `public/projects/webcore.png`) recevaient bien un
+  hash, mais celui-ci était écrit **à plat** dans `assets/` et mappé par nom de
+  fichier seul, si bien que la réécriture ne trouvait pas la référence
+  `/assets/projects/webcore.png` → le **nom non hashé** restait utilisé (pas de
+  cache-busting). `fingerprint_images` préserve désormais l'arborescence (hash
+  dans le sous-dossier, clé = chemin relatif) → les références sous-dossier sont
+  réécrites avec le hash. +1 test.
+
+- **Espaces significatifs supprimés en build `--prod`** — la minification HTML
+  supprimait *toute* suite d'espaces entre `>` et `<`, y compris un espace
+  significatif entre deux éléments inline (`<span>Mes</span> <span>projets</span>`
+  → « Mesprojets »). Elle **collapse désormais en un seul espace** (comme le
+  navigateur le fait des sauts de ligne du source), donc le prod rend à
+  l'identique du dev. +3 tests.
+
+- **Changement de langue inopérant en build `--prod`** — le nettoyage prod
+  retirait du DOM les attributs `data-webcore-*` (dont `data-webcore-interpolation`)
+  après le rendu initial. Or `setLocale` re-rend en **re-interrogeant** ces
+  attributs (`querySelectorAll`), qui n'existaient plus → le texte ne changeait pas
+  (la réactivité pilotée par l'état continuait de marcher car ses effets capturent
+  les références). Le nettoyage est désormais **ignoré quand le projet utilise
+  l'i18n**, pour que le sélecteur de langue fonctionne aussi en prod. +1 test.
+
+- **Minification JS cassée par un commentaire en fin de ligne** — `minify_js`
+  collait toutes les lignes **sans séparateur** ; un commentaire `//` en fin de
+  ligne dans du code `on:mount` transformait alors tout le reste du fichier en
+  commentaire (`Uncaught SyntaxError: Unexpected end of input`), et l'absence de
+  saut de ligne cassait aussi l'insertion automatique de points-virgules (ASI).
+  Les lignes sont désormais jointes avec `\n`. Le build `--prod` produit un JS
+  valide même quand le code utilisateur contient des commentaires en ligne. +2 tests.
+
+- **Nom de page commençant par un chiffre → JS invalide** — les ids d'éléments
+  sont préfixés par un dérivé du nom de page et émis comme **clés d'objet JS non
+  quotées** (`H = { … }`, `_e = { … }`). Une page `404` produisait `404btn1:` /
+  `404e0:`, une erreur de syntaxe qui cassait tout le runtime partagé.
+  `safe_id_prefix` garantit désormais un préfixe qui est un identifiant JS valide
+  (préfixe `p` si le nom commence par un chiffre : `404` → `p404`). +3 tests.
+
+---
+
 ## [3.3.0]
 
 - **PWA installable + hors-ligne** — une section `[pwa]` dans `webc.toml`

@@ -1,0 +1,42 @@
+page "playground" {
+    div class="page-header" {
+        span class="page-header-badge" { "▸ Interactive" }
+        h1 { "Playground" }
+        p class="page-sub" {
+            "Explore WebCore without leaving the page: pick a component and see its "
+            code { ".webc" }
+            " source next to the compiled, live result — then browse the compiler's error codes."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Component explorer" }
+        p {
+            "The source on the left compiles to the running component on the right — same code, no build step to watch it work."
+        }
+        Playground {}
+    }
+
+    section class="doc-section" {
+        h2 { "Error code explorer" }
+        p {
+            "Every parse error carries a stable "
+            code { "WCxxxx" }
+            " code and a contextual hint (in the terminal and in "
+            code { "webc check --json" }
+            "). Click a code to see exactly what triggers it."
+        }
+        ErrorExplorer {}
+    }
+
+    div class="callout callout-tip" {
+        strong { "Want the real thing? " }
+        "Scaffold a project with "
+        code { "webc new" }
+        " and run "
+        code { "webc dev" }
+        " — see the "
+        a href="/quickstart" { "Quick Start" }
+        "."
+    }
+}

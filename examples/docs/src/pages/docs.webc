@@ -1,0 +1,104 @@
+page "docs" {
+    div class="page-header" {
+        span class="page-header-badge" { "▸ WebCore 4.0" }
+        h1 { "Introduction" }
+        p class="page-sub" {
+            "WebCore is a declarative language for building web interfaces, compiled with Rust. One "
+            code { ".webc" }
+            " syntax unifies HTML, scoped CSS and reactive JavaScript — no framework, no bundler, no client-side dependencies."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "What is WebCore?" }
+        p {
+            "You write components in a single "
+            code { ".webc" }
+            " file — markup, styles and behaviour together — and the Rust compiler emits semantic HTML, component-scoped CSS and a minimal, tree-shaken runtime. Simple pages ship under 1.5 KB of JavaScript; static pages ship none."
+        }
+        pre class="code-block" data-lang="webc" {
+"component Counter {
+    state { count: Number = 0 }
+    view {
+        div {
+            p \"Count: \{count}\"
+            button on:click=\{count += 1} { \"+\" }
+        }
+    }
+    style {
+        div { display: flex; gap: 1rem; align-items: center; }
+    }
+}"
+        }
+        div class="callout callout-tip" {
+            strong { "Static by default. " }
+            "Everything that can be computed at build time — interpolations, "
+            code { "@if" }
+            " branches, "
+            code { "t(…)" }
+            " translations — is pre-rendered into the HTML. The runtime only wires up interactivity."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "New in 4.0" }
+        p { "The 4.0 line focuses on shipping less JavaScript, ranking in every language, catching mistakes earlier, and isolating every component." }
+        div class="pillars" {
+            div class="pillar" {
+                span class="pillar-badge" { "#50" }
+                div class="pillar-icon" { "🏝️" }
+                h3 { "Islands" }
+                p {
+                    "Defer a component's hydration with "
+                    code { "client=\"idle\"" }
+                    " or "
+                    code { "client=\"visible\"" }
+                    "."
+                }
+                a href="/islands" { "Read the guide →" }
+            }
+            div class="pillar" {
+                span class="pillar-badge" { "#45 · #46" }
+                div class="pillar-icon" { "🌍" }
+                h3 { "SSG i18n" }
+                p {
+                    "One static page per locale, with "
+                    code { "hreflang" }
+                    " and pre-rendered translations."
+                }
+                a href="/i18n" { "Read the guide →" }
+            }
+            div class="pillar" {
+                span class="pillar-badge" { "#47–#54" }
+                div class="pillar-icon" { "🛠️" }
+                h3 { "Sharper DX" }
+                p { "a11y lints, stable error codes, CSS source maps, friendlier grammar." }
+                a href="/features" { "See what's new →" }
+            }
+            div class="pillar" {
+                span class="pillar-badge" { "#42 · #43" }
+                div class="pillar-icon" { "🎯" }
+                h3 { "Component-scoped" }
+                p { "Reactive state and CSS are isolated per component — no collisions." }
+                a href="/syntax" { "Reference →" }
+            }
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Where to next" }
+        div class="table-wrap" {
+            table {
+                thead { tr { th { "If you want to…" } th { "Go to" } } }
+                tbody {
+                    tr { td { "Install the compiler and scaffold a project" } td { a href="/install" { "Installation" } } }
+                    tr { td { "Build your first component step by step" } td { a href="/quickstart" { "Quick Start" } } }
+                    tr { td { "Defer heavy components (islands)" } td { a href="/islands" { "Islands guide" } } }
+                    tr { td { "Ship a multilingual static site" } td { a href="/i18n" { "i18n guide" } } }
+                    tr { td { "Look up a directive or built-in" } td { a href="/syntax" { "Syntax reference" } } }
+                    tr { td { "See every CLI command" } td { a href="/cli" { "CLI reference" } } }
+                }
+            }
+        }
+    }
+}

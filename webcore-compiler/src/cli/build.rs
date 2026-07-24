@@ -65,6 +65,10 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
     // Resolve component imports (.webc → document.components + document.page_imports)
     resolve_component_imports(&mut document)?;
 
+    // Scope each component's reactive state to a unique key namespace so
+    // identically-named state in different components no longer collides.
+    crate::core::scope::scope_component_state(&mut document);
+
     // Detect and compile WASM module (wasm/Cargo.toml → dist/wasm/)
     let wasm_cargo = Path::new("wasm/Cargo.toml");
     if wasm_cargo.exists() {
@@ -155,16 +159,37 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
             short_name: p.short_name.clone(),
             apple_icon: "/assets/apple-touch-icon.png".to_string(),
         }),
+        // Per-page hreflang alternates are filled in the page loop when
+        // localized static pages are enabled (`[i18n] static`).
+        hreflang_alternates: Vec::new(),
     };
 
     // Generate CSS up front (theme + scoped component styles) so prod mode can
     // inline each page's critical CSS into its <head>.
-    let combined_css = codegen::css::generate_combined_css(theme.as_ref(), &document);
-    let processed_css = if config.mode == "prod" {
+    let (combined_css, css_line_maps) =
+        codegen::css::generate_combined_css_mapped(theme.as_ref(), &document);
+    // Dev source map (#54): serve the raw line-tracked CSS (still validated by
+    // LightningCSS below) so `theme.css.map` maps each scoped rule back to its
+    // `.webc`. Prod stays minified (single line) — no map, matching the JS
+    // source-map policy.
+    let css_source_map: Option<String> = if config.mode != "prod" {
+        build_css_source_map(&css_line_maps, &document)
+    } else {
+        None
+    };
+    let mut processed_css = if config.mode == "prod" {
         css_processor::minify_css(&combined_css)?
+    } else if css_source_map.is_some() {
+        // Validate via LightningCSS (propagates CSS parse errors), then serve
+        // the raw CSS the map was built against.
+        css_processor::format_css(&combined_css)?;
+        combined_css
     } else {
         css_processor::format_css(&combined_css)?
     };
+    if css_source_map.is_some() {
+        processed_css.push_str("\n/*# sourceMappingURL=theme.css.map */\n");
+    }
 
     // Pre-minified CSS parts for critical-CSS assembly (prod only):
     // global (theme vars + base) + one entry per styled component.
@@ -208,13 +233,9 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
     // Collect errors during page rendering to report all at once (error aggregation).
     let mut page_errors: Vec<error::CompileError> = Vec::new();
 
-    // Collect initial state once for SSG pre-rendering
+    // Collect initial state once for SSG pre-rendering. Per-page/locale
+    // `SsgContext` values are built on the fly in the render loops below.
     let initial_state = ssg::build_initial_state(&document);
-    let ssg_ctx = ssg::SsgContext {
-        state: &initial_state,
-        locales: &document.locales,
-        locale: &config.locale,
-    };
 
     // Return a document view scoped to the components available for `page_name`.
     // If the page file declared explicit imports, only those components are kept.
@@ -242,18 +263,66 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
         }
     }
 
-    // Generate HTML for each page — collect errors rather than stopping at the first
-    let page_count = document.pages.len();
-    for (idx, page_name) in document.pages.keys().enumerate() {
-        println!("  [{}/{}] {page_name}", idx + 1, page_count);
-        let filename = page_to_filename(page_name);
-        // Build a document view restricted to the components this page imports.
-        // Falls back to the full component pool for pages without import declarations.
-        let page_doc = page_scoped_doc(page_name);
-        // Per-page canonical URL: site_url + clean route ("index.html" → "/").
-        // The error page (404) is noindex and excluded from the sitemap, so it
-        // gets no canonical.
-        let canonical = config
+    // ── SSG i18n (#46) ────────────────────────────────────────────────────────
+    // Locales to statically render. The default locale is always first (it owns
+    // the shared runtime's expr/handler collection); when `[i18n] static` is on
+    // and extra locale catalogs exist, each is rendered under `/{locale}/`.
+    let mut render_locales: Vec<String> = vec![config.locale.clone()];
+    if config.i18n_static {
+        for l in document.locales.keys() {
+            if *l != config.locale {
+                render_locales.push(l.clone());
+            }
+        }
+    }
+    let localized = render_locales.len() > 1;
+
+    // Clean route for a built filename ("index.html" → "/", "x/index.html" → "/x/").
+    let route_of = |filename: &str| -> String {
+        if filename == "index.html" {
+            "/".to_string()
+        } else {
+            format!("/{}", filename.trim_end_matches("index.html"))
+        }
+    };
+    // Prefix a base filename / route with the locale (default locale stays at root).
+    let loc_filename = |locale: &str, base: &str| -> String {
+        if locale == config.locale {
+            base.to_string()
+        } else {
+            format!("{locale}/{base}")
+        }
+    };
+    let loc_route = |locale: &str, base_route: &str| -> String {
+        if locale == config.locale {
+            base_route.to_string()
+        } else {
+            format!("/{locale}{base_route}")
+        }
+    };
+    // Absolute href when a site URL is configured, otherwise root-relative.
+    let href_for = |route: &str| -> String {
+        match &config.url {
+            Some(base) => format!("{base}{route}"),
+            None => route.to_string(),
+        }
+    };
+    // hreflang alternates for a page (one per locale + x-default → default).
+    // Empty for the 404 page (noindex) and when localization is off.
+    let hreflang_for = |base_route: &str, base_filename: &str| -> Vec<(String, String)> {
+        if !localized || base_filename.starts_with("404") {
+            return Vec::new();
+        }
+        let mut v: Vec<(String, String)> = render_locales
+            .iter()
+            .map(|l| (l.clone(), href_for(&loc_route(l, base_route))))
+            .collect();
+        v.push(("x-default".to_string(), href_for(base_route)));
+        v
+    };
+    // Self-referencing canonical for a localized filename (404 excluded).
+    let canonical_for = |filename: &str| -> Option<String> {
+        config
             .url
             .as_ref()
             .filter(|_| !filename.starts_with("404"))
@@ -263,87 +332,70 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
                 } else {
                     format!("{base}/{}", filename.trim_end_matches("index.html"))
                 }
-            });
-        let page_options = codegen::html::HtmlPageOptions {
-            critical_css: critical_css_for(&page_doc, page_name),
-            canonical,
-            ..options.clone()
-        };
-        match codegen::html::generate_page(
-            &page_doc,
-            page_name,
-            &page_options,
-            Some(Path::new(".")),
-            Some(&ssg_ctx),
-        ) {
-            Ok(html_result) => {
-                all_handlers.extend(html_result.handlers);
-                all_exprs.extend(html_result.compiled_exprs);
-                // Write source map alongside the HTML when present (dev mode)
-                if let Some(ref map_json) = html_result.source_map_json {
-                    let map_path = dist_dir
-                        .join(filename.trim_end_matches("index.html"))
-                        .join(format!("{page_name}.js.map"));
-                    if let Some(parent) = map_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    let _ = fs::write(&map_path, map_json);
-                }
-                let final_html = if config.mode == "prod" {
-                    codegen::html::minify_html(&html_result.html)
-                } else {
-                    html_result.html
-                };
-                let output_path = dist_dir.join(&filename);
-                if let Some(parent) = output_path.parent() {
-                    if let Err(e) = fs::create_dir_all(parent) {
-                        page_errors.push(error::CompileError::Io {
-                            path: parent.to_path_buf(),
-                            source: e,
-                        });
-                        continue;
-                    }
-                }
-                if let Err(e) = fs::write(&output_path, final_html) {
-                    page_errors.push(error::CompileError::Io {
-                        path: output_path.clone(),
-                        source: e,
-                    });
-                }
-            }
-            Err(e) => {
-                page_errors.push(e);
-            }
-        }
-    }
+            })
+    };
 
-    // Generate HTML for each component that looks like a page
-    for (component_name, component) in &document.components {
-        if component_name.ends_with("Page") {
-            let filename = page_to_filename(component_name);
-            println!("📄 Generating: {component_name} → {filename}");
-            let temp_page = ast::Page {
-                name: component_name.clone(),
-                head: None,
-                content: component.view.clone(),
-                span: component.span,
+    // Generate HTML for each page — collect errors rather than stopping at the first
+    let page_count = document.pages.len();
+    for (idx, page_name) in document.pages.keys().enumerate() {
+        println!("  [{}/{}] {page_name}", idx + 1, page_count);
+        let base_filename = page_to_filename(page_name);
+        let base_route = route_of(&base_filename);
+        // Build a document view restricted to the components this page imports.
+        // Falls back to the full component pool for pages without import declarations.
+        let page_doc = page_scoped_doc(page_name);
+        let critical = critical_css_for(&page_doc, page_name);
+        let hreflang = hreflang_for(&base_route, &base_filename);
+
+        for locale in &render_locales {
+            let is_default = locale == &config.locale;
+            // The 404 page is noindex — render it once, in the default locale only.
+            if !is_default && base_filename.starts_with("404") {
+                continue;
+            }
+            let filename = loc_filename(locale, &base_filename);
+            let loc_ssg = ssg::SsgContext {
+                state: &initial_state,
+                locales: &document.locales,
+                locale,
             };
-            let temp_doc = build_temp_doc_for_component(&document, temp_page, component_name);
-
             let page_options = codegen::html::HtmlPageOptions {
-                critical_css: critical_css_for(&temp_doc, component_name),
+                critical_css: critical.clone(),
+                canonical: canonical_for(&filename),
+                // Non-default locale pages carry the locale as their `lang`.
+                lang: if is_default {
+                    config.app_lang.clone()
+                } else {
+                    locale.clone()
+                },
+                hreflang_alternates: hreflang.clone(),
                 ..options.clone()
             };
             match codegen::html::generate_page(
-                &temp_doc,
-                component_name,
+                &page_doc,
+                page_name,
                 &page_options,
                 Some(Path::new(".")),
-                Some(&ssg_ctx),
+                Some(&loc_ssg),
             ) {
                 Ok(html_result) => {
-                    all_handlers.extend(html_result.handlers);
-                    all_exprs.extend(html_result.compiled_exprs);
+                    // The compiled closures/handlers are locale-independent, so
+                    // collect them once (from the default locale) for the single
+                    // shared runtime — avoids duplicate `_e`/handler entries.
+                    if is_default {
+                        all_handlers.extend(html_result.handlers);
+                        all_exprs.extend(html_result.compiled_exprs);
+                        // Write source map alongside the HTML when present (dev mode)
+                        if let Some(ref map_json) = html_result.source_map_json {
+                            let map_path = dist_dir
+                                .join(filename.trim_end_matches("index.html"))
+                                .join(format!("{page_name}.js.map"));
+                            if let Some(parent) = map_path.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            let _ = fs::write(&map_path, map_json);
+                        }
+                    }
                     let final_html = if config.mode == "prod" {
                         codegen::html::minify_html(&html_result.html)
                     } else {
@@ -368,6 +420,86 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
                 }
                 Err(e) => {
                     page_errors.push(e);
+                }
+            }
+        }
+    }
+
+    // Generate HTML for each component that looks like a page
+    for (component_name, component) in &document.components {
+        if component_name.ends_with("Page") {
+            let base_filename = page_to_filename(component_name);
+            let base_route = route_of(&base_filename);
+            println!("📄 Generating: {component_name} → {base_filename}");
+            let temp_page = ast::Page {
+                name: component_name.clone(),
+                head: None,
+                content: component.view.clone(),
+                span: component.span,
+            };
+            let temp_doc = build_temp_doc_for_component(&document, temp_page, component_name);
+            let critical = critical_css_for(&temp_doc, component_name);
+            let hreflang = hreflang_for(&base_route, &base_filename);
+
+            for locale in &render_locales {
+                let is_default = locale == &config.locale;
+                if !is_default && base_filename.starts_with("404") {
+                    continue;
+                }
+                let filename = loc_filename(locale, &base_filename);
+                let loc_ssg = ssg::SsgContext {
+                    state: &initial_state,
+                    locales: &document.locales,
+                    locale,
+                };
+                let page_options = codegen::html::HtmlPageOptions {
+                    critical_css: critical.clone(),
+                    canonical: canonical_for(&filename),
+                    lang: if is_default {
+                        config.app_lang.clone()
+                    } else {
+                        locale.clone()
+                    },
+                    hreflang_alternates: hreflang.clone(),
+                    ..options.clone()
+                };
+                match codegen::html::generate_page(
+                    &temp_doc,
+                    component_name,
+                    &page_options,
+                    Some(Path::new(".")),
+                    Some(&loc_ssg),
+                ) {
+                    Ok(html_result) => {
+                        if is_default {
+                            all_handlers.extend(html_result.handlers);
+                            all_exprs.extend(html_result.compiled_exprs);
+                        }
+                        let final_html = if config.mode == "prod" {
+                            codegen::html::minify_html(&html_result.html)
+                        } else {
+                            html_result.html
+                        };
+                        let output_path = dist_dir.join(&filename);
+                        if let Some(parent) = output_path.parent() {
+                            if let Err(e) = fs::create_dir_all(parent) {
+                                page_errors.push(error::CompileError::Io {
+                                    path: parent.to_path_buf(),
+                                    source: e,
+                                });
+                                continue;
+                            }
+                        }
+                        if let Err(e) = fs::write(&output_path, final_html) {
+                            page_errors.push(error::CompileError::Io {
+                                path: output_path.clone(),
+                                source: e,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        page_errors.push(e);
+                    }
                 }
             }
         }
@@ -494,6 +626,15 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
         path: css_path.clone(),
         source: e,
     })?;
+    // Dev CSS source map (#54): written next to theme.css; the stylesheet's
+    // trailing `sourceMappingURL` comment points browsers at it.
+    if let Some(ref map_json) = css_source_map {
+        let map_path = assets_dir.join("theme.css.map");
+        fs::write(&map_path, map_json).map_err(|e| error::CompileError::Io {
+            path: map_path.clone(),
+            source: e,
+        })?;
+    }
 
     let prod = config.mode == "prod";
 
@@ -548,19 +689,23 @@ pub(crate) fn build_project(mode_override: Option<&str>) -> Result<(), error::Co
 
     // ── SEO root files: robots.txt, sitemap.xml, 404.html ────────────────────
     // Clean-URL path for every page ("index.html" → "/", "x/index.html" → "/x/").
-    let mut routes: Vec<String> = document
-        .pages
-        .keys()
-        .map(|name| {
-            let f = page_to_filename(name);
-            if f == "index.html" {
-                "/".to_string()
-            } else {
-                format!("/{}", f.trim_end_matches("index.html"))
+    // With localized static pages, each non-404 route also gets its `/{locale}/`
+    // variants so every language version is indexable.
+    let mut routes: Vec<String> = Vec::new();
+    for name in document.pages.keys() {
+        let f = page_to_filename(name);
+        let base_route = route_of(&f);
+        routes.push(base_route.clone());
+        if localized && !f.starts_with("404") {
+            for locale in &render_locales {
+                if locale != &config.locale {
+                    routes.push(loc_route(locale, &base_route));
+                }
             }
-        })
-        .collect();
+        }
+    }
     routes.sort();
+    routes.dedup();
 
     // robots.txt — always emitted; advertises the sitemap when a site URL is set.
     let robots_path = dist_dir.join("robots.txt");
@@ -661,6 +806,42 @@ fn render_manifest(pwa: &Pwa, icon_192: &str, icon_512: &str, icon_maskable: &st
 // ── SEO root files (pure renderers, unit-tested) ─────────────────────────────
 
 /// Render `robots.txt`: allow-all, plus a `Sitemap:` line when a site URL is set.
+/// Build the dev CSS source map (#54): each generated-stylesheet line that
+/// carries a component rule is mapped back to its `.webc` file + line. Sources
+/// are labelled with a project-relative path and their content is embedded
+/// (`sourcesContent`) so DevTools needs no extra fetch. Returns `None` when
+/// there is nothing to map.
+fn build_css_source_map(
+    maps: &[codegen::css::CssLineMap],
+    document: &ast::WebCoreDocument,
+) -> Option<String> {
+    if maps.is_empty() {
+        return None;
+    }
+    let cwd = std::env::current_dir().ok();
+    let mut sm = codegen::css_sourcemap::CssSourceMap::new("theme.css");
+    for m in maps {
+        let Some(path) = document.source_files.get(&m.component) else {
+            continue;
+        };
+        let label = cwd
+            .as_ref()
+            .and_then(|c| path.strip_prefix(c).ok())
+            .unwrap_or(path.as_path())
+            .display()
+            .to_string();
+        let content = fs::read_to_string(path).unwrap_or_default();
+        let idx = sm.add_source(&label, &content);
+        // `src_line` is 1-indexed; source maps are 0-indexed.
+        sm.add(m.out_line, idx, m.src_line.saturating_sub(1));
+    }
+    if sm.is_empty() {
+        None
+    } else {
+        Some(sm.build())
+    }
+}
+
 fn render_robots(url: Option<&str>) -> String {
     let mut s = String::from("User-agent: *\nAllow: /\n");
     if let Some(base) = url {
@@ -681,64 +862,6 @@ fn render_sitemap(base: &str, routes: &[String]) -> String {
     }
     s.push_str("</urlset>\n");
     s
-}
-
-#[cfg(test)]
-mod seo_tests {
-    use super::{render_manifest, render_robots, render_sitemap, Pwa};
-
-    #[test]
-    fn manifest_has_required_fields_and_icons() {
-        let pwa = Pwa {
-            name: "My \"App\"".to_string(),
-            short_name: "App".to_string(),
-            theme_color: "#7C3AED".to_string(),
-            background_color: "#05030F".to_string(),
-            display: "standalone".to_string(),
-        };
-        let m = render_manifest(
-            &pwa,
-            "/assets/icon-192.png",
-            "/assets/icon-512.png",
-            "/assets/icon-maskable.png",
-        );
-        assert!(m.contains(r#""short_name": "App""#));
-        assert!(m.contains(r#""start_url": "/""#));
-        assert!(m.contains(r#""display": "standalone""#));
-        assert!(m.contains(r##""theme_color": "#7C3AED""##));
-        assert!(m.contains(r#""sizes": "192x192""#));
-        assert!(m.contains(r#""purpose": "maskable""#));
-        // Quotes in the name are JSON-escaped.
-        assert!(
-            m.contains(r#""name": "My \"App\"""#),
-            "name not escaped:\n{m}"
-        );
-    }
-
-    #[test]
-    fn robots_without_url_has_no_sitemap_line() {
-        let out = render_robots(None);
-        assert!(out.contains("User-agent: *"));
-        assert!(out.contains("Allow: /"));
-        assert!(!out.contains("Sitemap:"));
-    }
-
-    #[test]
-    fn robots_with_url_links_sitemap() {
-        let out = render_robots(Some("https://example.com"));
-        assert!(out.contains("Sitemap: https://example.com/sitemap.xml"));
-    }
-
-    #[test]
-    fn sitemap_lists_routes_and_skips_404() {
-        let routes = vec!["/".to_string(), "/skills/".to_string(), "/404/".to_string()];
-        let out = render_sitemap("https://example.com", &routes);
-        assert!(out.contains("<loc>https://example.com/</loc>"));
-        assert!(out.contains("<loc>https://example.com/skills/</loc>"));
-        assert!(!out.contains("/404"), "404 must not be advertised:\n{out}");
-        assert!(out.trim_start().starts_with("<?xml"));
-        assert!(out.contains("</urlset>"));
-    }
 }
 
 /// Watch mode: rebuild whenever source files change (no HTTP server).
@@ -805,5 +928,63 @@ pub(crate) fn watch_project() -> Result<(), String> {
                 println!("✅ Rebuild complete");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod seo_tests {
+    use super::{render_manifest, render_robots, render_sitemap, Pwa};
+
+    #[test]
+    fn manifest_has_required_fields_and_icons() {
+        let pwa = Pwa {
+            name: "My \"App\"".to_string(),
+            short_name: "App".to_string(),
+            theme_color: "#7C3AED".to_string(),
+            background_color: "#05030F".to_string(),
+            display: "standalone".to_string(),
+        };
+        let m = render_manifest(
+            &pwa,
+            "/assets/icon-192.png",
+            "/assets/icon-512.png",
+            "/assets/icon-maskable.png",
+        );
+        assert!(m.contains(r#""short_name": "App""#));
+        assert!(m.contains(r#""start_url": "/""#));
+        assert!(m.contains(r#""display": "standalone""#));
+        assert!(m.contains(r##""theme_color": "#7C3AED""##));
+        assert!(m.contains(r#""sizes": "192x192""#));
+        assert!(m.contains(r#""purpose": "maskable""#));
+        // Quotes in the name are JSON-escaped.
+        assert!(
+            m.contains(r#""name": "My \"App\"""#),
+            "name not escaped:\n{m}"
+        );
+    }
+
+    #[test]
+    fn robots_without_url_has_no_sitemap_line() {
+        let out = render_robots(None);
+        assert!(out.contains("User-agent: *"));
+        assert!(out.contains("Allow: /"));
+        assert!(!out.contains("Sitemap:"));
+    }
+
+    #[test]
+    fn robots_with_url_links_sitemap() {
+        let out = render_robots(Some("https://example.com"));
+        assert!(out.contains("Sitemap: https://example.com/sitemap.xml"));
+    }
+
+    #[test]
+    fn sitemap_lists_routes_and_skips_404() {
+        let routes = vec!["/".to_string(), "/skills/".to_string(), "/404/".to_string()];
+        let out = render_sitemap("https://example.com", &routes);
+        assert!(out.contains("<loc>https://example.com/</loc>"));
+        assert!(out.contains("<loc>https://example.com/skills/</loc>"));
+        assert!(!out.contains("/404"), "404 must not be advertised:\n{out}");
+        assert!(out.trim_start().starts_with("<?xml"));
+        assert!(out.contains("</urlset>"));
     }
 }

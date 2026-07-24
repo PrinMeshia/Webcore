@@ -62,6 +62,10 @@ pub struct HtmlPageOptions {
     /// PWA head data. When set, the manifest link, theme-color and Apple
     /// web-app meta/icon tags are emitted into `<head>`. Default: None.
     pub pwa: Option<PwaHead>,
+    /// SSG i18n (#46): `(hreflang, href)` alternates emitted as
+    /// `<link rel="alternate" hreflang="…">` in `<head>`. Includes one entry
+    /// per locale plus `x-default`. Empty when localized static pages are off.
+    pub hreflang_alternates: Vec<(String, String)>,
 }
 
 /// Head-level PWA data emitted when a `[pwa]` section is configured.
@@ -87,6 +91,7 @@ impl Default for HtmlPageOptions {
             site_url: None,
             canonical: None,
             pwa: None,
+            hreflang_alternates: Vec::new(),
         }
     }
 }
@@ -196,6 +201,7 @@ pub(crate) fn generate_spa_html(
         options.site_url.as_deref(),
         options.canonical.as_deref(),
         options.pwa.as_ref(),
+        &options.hreflang_alternates,
     );
 
     // Generate layout shell (without page content, just the structure)
@@ -376,6 +382,7 @@ pub(crate) fn generate_page(
         options.site_url.as_deref(),
         options.canonical.as_deref(),
         options.pwa.as_ref(),
+        &options.hreflang_alternates,
     );
 
     // Build CompiledVars for v3 expression compilation
@@ -550,6 +557,7 @@ mod tests {
             site_url: None,
             canonical: None,
             pwa: None,
+            hreflang_alternates: vec![],
         };
         let res = generate_spa_html(&doc, &opts).expect("spa ok");
 
@@ -626,6 +634,7 @@ mod tests {
             site_url: None,
             canonical: None,
             pwa: None,
+            hreflang_alternates: vec![],
         };
         let res = generate_html(&doc, "test", &opts).expect("html ok");
         assert!(
@@ -701,6 +710,7 @@ mod tests {
             site_url: None,
             canonical: None,
             pwa: None,
+            hreflang_alternates: vec![],
         };
         let res = generate_html(&doc, "test", &opts).expect("html ok");
         assert!(res.html.contains("data-webcore-e=\"foo\""));

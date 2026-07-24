@@ -1,0 +1,114 @@
+page "cli" {
+    div class="page-header" {
+        span class="page-header-badge" { "▸ Reference" }
+        h1 { "CLI" }
+        p class="page-sub" {
+            "Everything the "
+            code { "webc" }
+            " binary can do — scaffold, develop, validate, format and compile."
+        }
+    }
+
+    div class="quick-ref" {
+        code { "webc new" }
+        code { "webc dev" }
+        code { "webc build" }
+        code { "webc build --prod" }
+        code { "webc watch" }
+        code { "webc check" }
+        code { "webc check --a11y" }
+        code { "webc fmt" }
+        code { "webc lsp" }
+    }
+
+    section class="doc-section" {
+        h2 { "Commands" }
+        div class="table-wrap" {
+            table {
+                thead { tr { th { "Command" } th { "Description" } } }
+                tbody {
+                    tr { td { code { "new <name>" } } td { "Scaffold a new project (app, layout, home page, Counter, theme, WASM stub)." } }
+                    tr { td { code { "dev [port]" } } td { "Dev server with hot reload over WebSocket. Default port 3000." } }
+                    tr { td { code { "build" } } td { "Compile to " code { "dist/" } ". " code { "--prod" } " / " code { "--dev" } " override the config mode." } }
+                    tr { td { code { "watch" } } td { "Rebuild on every change (no server)." } }
+                    tr { td { code { "check" } } td { "Validate routes, components, props and cycles without emitting files." } }
+                    tr { td { code { "fmt [paths]" } } td { "Format " code { ".webc" } " files (idempotent). Defaults to " code { "src/" } "." } }
+                    tr { td { code { "lsp" } } td { "Start the LSP 3.17 server (hover, completion, diagnostics, semantic tokens, code actions)." } }
+                }
+            }
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "webc build" }
+        p {
+            code { "--prod" }
+            " enables minification (HTML/CSS/JS), inlined critical CSS, content-hashed assets, SRI and an optional strict CSP. "
+            code { "--dev" }
+            " keeps readable output, source maps for JS "
+            strong { "and CSS" }
+            " ("
+            span class="version-tag" { "4.0" }
+            "), and the shared runtime for fast rebuilds."
+        }
+        pre class="code-block" data-lang="bash" {
+"webc build --prod
+# dist/ : minified, hashed (webcore.<hash>.js, theme.css?v=…), sitemap.xml, robots.txt
+
+webc build --dev
+# dist/ : readable, + <page>.js.map and assets/theme.css.map"
+        }
+    }
+
+    section class="doc-section" {
+        h2 {
+            "webc check --a11y "
+            span class="version-tag version-tag-new" { "4.0" }
+        }
+        p {
+            "Static accessibility lints (RGAA / WCAG): "
+            code { "<img>" }
+            " without a textual alternative, "
+            code { "<label>" }
+            " without "
+            code { "for" }
+            " nor a wrapped control, and "
+            code { "<a>" }
+            "/"
+            code { "<button>" }
+            " without an accessible name. Warnings by default; "
+            code { "--strict" }
+            " fails the command; "
+            code { "--json" }
+            " emits structured diagnostics with stable "
+            code { "WCxxxx" }
+            " codes for editors and CI."
+        }
+        pre class="code-block" data-lang="bash" {
+"webc check --a11y            # human-readable warnings
+webc check --a11y --strict   # exit 1 on any finding
+webc check --json            # { \"ok\": …, \"diagnostics\": [ { \"code\": \"WC…\", … } ] }"
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "webc.toml" }
+        p { "Project configuration lives in " code { "webc.toml" } ":" }
+        pre class="code-block" data-lang="toml" {
+"[app]
+title  = \"My App\"
+lang   = \"fr\"
+locale = \"fr\"
+mode   = \"dev\"          # or \"prod\"
+url    = \"https://example.com\"   # enables sitemap + absolute canonicals
+csp    = true            # strict CSP meta (prod)
+
+[i18n]
+static = true            # one static page per locale + hreflang (4.0)
+
+[pwa]                    # optional: manifest + service worker
+name = \"My App\"
+theme_color = \"#f97316\""
+        }
+    }
+}

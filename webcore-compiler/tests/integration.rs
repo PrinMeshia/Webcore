@@ -444,7 +444,11 @@ fn check_json_structured_diagnostics() {
     assert_eq!(report["ok"], false);
     let d = &report["diagnostics"][0];
     assert_eq!(d["severity"], "error");
-    assert_eq!(d["code"], "parse");
+    // #48 — parse diagnostics carry a stable `WCxxxx` code.
+    assert!(
+        d["code"].as_str().unwrap_or("").starts_with("WC"),
+        "parse diagnostic should carry a WC code: {report}"
+    );
     assert!(
         d["file"].as_str().unwrap_or("").ends_with("home.webc"),
         "parse diagnostic should point at home.webc: {report}"
@@ -477,4 +481,375 @@ fn check_json_structured_diagnostics() {
     assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
 
     fs::remove_dir_all(&work).ok();
+}
+
+// ── #44: pipeline non-regression across every example, in dev AND prod ───────
+//
+// Builds each example project in both modes and asserts invariants that guard
+// the bug classes found while dogfooding:
+//   - compiled `()=>…` closures must never leak into prerendered HTML (an
+//     interpolation rendering its closure source instead of the value);
+//   - the runtime JS must never contain a double-wrapped `()=>()=>` closure (#52);
+//   - the emitted JS must be syntactically valid (node --check);
+//   - each mode must be deterministic (byte-identical rebuild).
+
+/// Build one example project in the given mode (`"dev"` / `"prod"`).
+fn run_build_mode(project_dir: &Path, mode: &str) {
+    let flag = format!("--{mode}");
+    let output = Command::new(webc_bin())
+        .args(["build", &flag])
+        .current_dir(project_dir)
+        .output()
+        .expect("spawn webc build");
+    assert!(
+        output.status.success(),
+        "`webc build {flag}` failed in {}\n--- stderr ---\n{}",
+        project_dir.display(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+/// Locate the shared runtime JS asset (`webcore*.js`) in a dist/ tree, if any.
+fn find_runtime_js(dist: &Path) -> Option<PathBuf> {
+    fs::read_dir(dist.join("assets"))
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("webcore") && n.ends_with(".js"))
+                .unwrap_or(false)
+        })
+}
+
+/// Invariants every example must satisfy in every build mode.
+fn assert_pipeline_invariants(dist: &Path, mode: &str, example: &str) {
+    // Prerendered HTML must never carry a raw compiled closure — those live only
+    // in the runtime JS. A leak means an interpolation rendered its closure
+    // source as text instead of the evaluated value.
+    for (rel, bytes) in snapshot_tree(dist) {
+        if rel.ends_with(".html") {
+            let html = String::from_utf8_lossy(&bytes);
+            assert!(
+                !html.contains("()=>S.get") && !html.contains("()=>STORE.get"),
+                "{example} [{mode}]: compiled closure leaked into HTML {rel}"
+            );
+        }
+    }
+    // The runtime JS must be valid and free of double-wrapped closures (#52).
+    if let Some(js_path) = find_runtime_js(dist) {
+        let js = fs::read_to_string(&js_path).expect("read runtime js");
+        assert!(
+            !js.contains("()=>()=>"),
+            "{example} [{mode}]: double-wrapped _e closure in {}",
+            js_path.display()
+        );
+        check_js_syntax(&js_path);
+    }
+}
+
+/// Build an example in both modes, checking invariants + determinism.
+fn check_example_pipeline(example: &str) {
+    let src = examples_dir().join(example);
+    assert!(src.is_dir(), "missing example project: {}", src.display());
+    for mode in ["dev", "prod"] {
+        let work = scratch_dir(&format!("{example}-{mode}"));
+        copy_project(&src, &work);
+        run_build_mode(&work, mode);
+        let dist = work.join("dist");
+        assert!(
+            dist.join("index.html").is_file(),
+            "{example} [{mode}]: dist/index.html missing"
+        );
+        assert_pipeline_invariants(&dist, mode, example);
+        let first = snapshot_tree(&dist);
+        run_build_mode(&work, mode);
+        let second = snapshot_tree(&dist);
+        assert_eq!(
+            first, second,
+            "{example} [{mode}]: dist/ differs between two identical builds"
+        );
+        fs::remove_dir_all(&work).ok();
+    }
+}
+
+#[test]
+fn pipeline_invariants_all_examples_dev_and_prod() {
+    let mut examples: Vec<String> = fs::read_dir(examples_dir())
+        .expect("read examples/ dir")
+        .flatten()
+        .filter(|e| e.path().join("webc.toml").is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    examples.sort();
+    assert!(!examples.is_empty(), "no example projects found");
+    for ex in &examples {
+        check_example_pipeline(ex);
+    }
+}
+
+#[test]
+fn check_a11y_reports_and_respects_strict() {
+    let work = scratch_dir("a11y-check");
+    fs::create_dir_all(work.join("src/layouts")).expect("mkdir layouts");
+    fs::create_dir_all(work.join("src/pages")).expect("mkdir pages");
+    fs::write(
+        work.join("webc.toml"),
+        "[app]\ntitle = \"T\"\nlang = \"fr\"\nmode = \"dev\"\n",
+    )
+    .expect("write webc.toml");
+    fs::write(
+        work.join("src/layouts/MainLayout.webc"),
+        "layout MainLayout { main { slot content } }\n",
+    )
+    .expect("write layout");
+    fs::write(
+        work.join("src/pages/home.webc"),
+        "page \"home\" {\n    img src=\"/a.svg\"\n}\n",
+    )
+    .expect("write page with img-no-alt");
+
+    let run = |args: &[&str]| -> (bool, serde_json::Value) {
+        let out = Command::new(webc_bin())
+            .args(args)
+            .current_dir(&work)
+            .output()
+            .expect("spawn webc check");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
+            .unwrap_or_else(|e| panic!("stdout is not valid JSON ({e}):\n{stdout}"));
+        (out.status.success(), parsed)
+    };
+
+    // Plain check: a missing alt is not a hard error → passes.
+    let (ok, report) = run(&["check", "--json"]);
+    assert!(ok, "plain check should pass:\n{report}");
+
+    // --a11y: the img-alt warning is reported but does NOT fail (no --strict).
+    let (ok, report) = run(&["check", "--a11y", "--json"]);
+    assert!(
+        ok,
+        "--a11y warnings must not fail without --strict:\n{report}"
+    );
+    assert_eq!(report["diagnostics"][0]["code"], "a11y-img-alt");
+    assert_eq!(report["diagnostics"][0]["severity"], "warning");
+
+    // --a11y --strict: the warning now fails the check.
+    let (ok, _report) = run(&["check", "--a11y", "--strict", "--json"]);
+    assert!(!ok, "--strict must fail on a11y findings");
+
+    fs::remove_dir_all(&work).ok();
+}
+
+/// #46 — `[i18n] static` generates one page per locale (default at root, others
+/// under `/{locale}/`) with correct `lang`, translated content, and hreflang
+/// alternates; the sitemap lists every localized URL.
+#[test]
+fn i18n_static_generates_localized_pages() {
+    let work = scratch_dir("i18n-static");
+    fs::create_dir_all(work.join("src/layouts")).expect("mkdir layouts");
+    fs::create_dir_all(work.join("src/pages")).expect("mkdir pages");
+    fs::create_dir_all(work.join("locales")).expect("mkdir locales");
+    fs::write(
+        work.join("webc.toml"),
+        "[app]\ntitle = \"T\"\nlang = \"fr\"\nlocale = \"fr\"\nmode = \"prod\"\nurl = \"https://example.com\"\n\n[i18n]\nstatic = true\n",
+    )
+    .expect("write webc.toml");
+    fs::write(work.join("locales/fr.toml"), "welcome = \"Bienvenue\"\n").expect("write fr");
+    fs::write(work.join("locales/en.toml"), "welcome = \"Welcome\"\n").expect("write en");
+    fs::write(
+        work.join("src/layouts/MainLayout.webc"),
+        "layout MainLayout { main { slot content } }\n",
+    )
+    .expect("write layout");
+    fs::write(
+        work.join("src/pages/home.webc"),
+        "page \"home\" { h1 \"{t(\"welcome\")}\" }\n",
+    )
+    .expect("write home");
+
+    run_build(&work);
+    let dist = work.join("dist");
+
+    let fr = fs::read_to_string(dist.join("index.html")).expect("fr index");
+    let en = fs::read_to_string(dist.join("en/index.html")).expect("en index");
+
+    assert!(fr.contains("<html lang=\"fr\">"), "fr lang wrong:\n{fr}");
+    assert!(fr.contains("Bienvenue"), "fr content missing:\n{fr}");
+    assert!(en.contains("<html lang=\"en\">"), "en lang wrong:\n{en}");
+    assert!(en.contains("Welcome"), "en content missing:\n{en}");
+
+    // Both pages advertise every locale + x-default.
+    for html in [&fr, &en] {
+        assert!(
+            html.contains(r#"<link rel="alternate" hreflang="en" href="https://example.com/en/">"#),
+            "en alternate missing:\n{html}"
+        );
+        assert!(
+            html.contains(
+                r#"<link rel="alternate" hreflang="x-default" href="https://example.com/">"#
+            ),
+            "x-default alternate missing:\n{html}"
+        );
+    }
+    // Self-referencing canonicals.
+    assert!(en.contains(r#"<link rel="canonical" href="https://example.com/en/">"#));
+
+    // Sitemap lists the localized URL.
+    let sitemap = fs::read_to_string(dist.join("sitemap.xml")).expect("sitemap");
+    assert!(
+        sitemap.contains("<loc>https://example.com/en/</loc>"),
+        "sitemap missing localized URL:\n{sitemap}"
+    );
+
+    // The shared runtime initializes LOCALE from the pre-rendered <html lang>.
+    let js = find_runtime_js(&dist).expect("runtime js");
+    let js_src = fs::read_to_string(&js).expect("read runtime js");
+    assert!(
+        js_src.contains("document.documentElement.lang"),
+        "runtime does not read html lang for LOCALE init"
+    );
+
+    fs::remove_dir_all(&work).ok();
+}
+
+/// #50 — `client="visible"` on a component instance wraps it in a static island
+/// marker and emits valid deferred-hydration runtime (IntersectionObserver +
+/// requestIdleCallback scheduler), with the component's on:mount deferred.
+#[test]
+fn islands_defer_hydration_end_to_end() {
+    let work = scratch_dir("islands");
+    fs::create_dir_all(work.join("src/layouts")).expect("mkdir layouts");
+    fs::create_dir_all(work.join("src/pages")).expect("mkdir pages");
+    fs::create_dir_all(work.join("src/components")).expect("mkdir components");
+    fs::write(
+        work.join("webc.toml"),
+        "[app]\ntitle = \"T\"\nlang = \"fr\"\nmode = \"prod\"\n",
+    )
+    .expect("write webc.toml");
+    fs::write(
+        work.join("src/layouts/MainLayout.webc"),
+        "layout MainLayout { main { slot content } }\n",
+    )
+    .expect("write layout");
+    fs::write(
+        work.join("src/components/Counter.webc"),
+        "component Counter {\n    state { count: Number = 0 }\n    on:mount { window.__m = 1 }\n    view { div { p \"C:{count}\" button on:click={count += 1} { \"+\" } } }\n}\n",
+    )
+    .expect("write component");
+    fs::write(
+        work.join("src/pages/home.webc"),
+        "page \"home\" {\n    h1 \"Static\"\n    Counter client=\"visible\" {}\n}\n",
+    )
+    .expect("write home");
+
+    run_build(&work);
+    let dist = work.join("dist");
+
+    // Island wrapper is present and the content is statically pre-rendered.
+    let html = fs::read_to_string(dist.join("index.html")).expect("index");
+    assert!(
+        html.contains(r#"data-webcore-island="visible""#)
+            && html.contains(r#"data-webcore-island-comp="Counter""#),
+        "island marker missing:\n{html}"
+    );
+    assert!(
+        html.contains("C:"),
+        "island content not pre-rendered:\n{html}"
+    );
+
+    // Runtime carries the scheduler and is syntactically valid.
+    let js = find_runtime_js(&dist).expect("runtime js");
+    let js_src = fs::read_to_string(&js).expect("read runtime js");
+    assert!(
+        js_src.contains("IntersectionObserver") && js_src.contains("requestIdleCallback"),
+        "island scheduler missing from runtime"
+    );
+    assert!(
+        js_src.contains("data-webcore-ready"),
+        "island hydration marker missing"
+    );
+    check_js_syntax(&js);
+
+    fs::remove_dir_all(&work).ok();
+}
+
+/// #54 — dev builds emit a CSS source map (`theme.css.map`) mapping each scoped
+/// rule back to its `.webc`; prod builds (minified CSS) emit none.
+#[test]
+fn css_source_map_dev_only() {
+    let write_project = |dir: &Path, mode: &str| {
+        fs::create_dir_all(dir.join("src/layouts")).unwrap();
+        fs::create_dir_all(dir.join("src/pages")).unwrap();
+        fs::create_dir_all(dir.join("src/components")).unwrap();
+        fs::write(
+            dir.join("webc.toml"),
+            format!("[app]\ntitle = \"T\"\nlang = \"fr\"\nmode = \"{mode}\"\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/layouts/MainLayout.webc"),
+            "layout MainLayout { main { slot content } }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/components/Box.webc"),
+            "component Box {\n    view { div class=\"box\" \"x\" }\n    style { .box { color: red; } }\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/pages/home.webc"),
+            "page \"home\" { Box {} }\n",
+        )
+        .unwrap();
+    };
+
+    // Dev: map emitted, referenced, valid, points at the .webc.
+    let dev = scratch_dir("cssmap-dev");
+    write_project(&dev, "dev");
+    run_build(&dev);
+    let css = fs::read_to_string(dev.join("dist/assets/theme.css")).unwrap();
+    assert!(
+        css.contains("/*# sourceMappingURL=theme.css.map */"),
+        "dev CSS should reference its source map"
+    );
+    let map = fs::read_to_string(dev.join("dist/assets/theme.css.map")).expect("map file");
+    let parsed: serde_json::Value = serde_json::from_str(&map).expect("map is valid JSON");
+    assert_eq!(parsed["version"], 3);
+    assert_eq!(parsed["file"], "theme.css");
+    assert!(
+        parsed["sources"][0]
+            .as_str()
+            .unwrap_or("")
+            .ends_with("Box.webc"),
+        "source should be the .webc: {map}"
+    );
+    assert!(
+        parsed["sourcesContent"][0]
+            .as_str()
+            .unwrap_or("")
+            .contains("component Box"),
+        "sourcesContent should embed the .webc"
+    );
+    assert!(
+        !parsed["mappings"].as_str().unwrap_or("").is_empty(),
+        "mappings must not be empty"
+    );
+    fs::remove_dir_all(&dev).ok();
+
+    // Prod: no map, no reference (minified single-line CSS).
+    let prod = scratch_dir("cssmap-prod");
+    write_project(&prod, "prod");
+    run_build(&prod);
+    assert!(
+        !prod.join("dist/assets/theme.css.map").exists(),
+        "prod must not emit a CSS source map"
+    );
+    let prod_css = fs::read_to_string(prod.join("dist/assets/theme.css")).unwrap();
+    assert!(
+        !prod_css.contains("sourceMappingURL"),
+        "prod CSS must not reference a source map"
+    );
+    fs::remove_dir_all(&prod).ok();
 }

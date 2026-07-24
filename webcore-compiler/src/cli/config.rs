@@ -20,6 +20,10 @@ pub(crate) struct Config {
     /// PWA settings (`[pwa]` in webc.toml). When present, `webc build` emits a
     /// web app manifest + service worker and links them into every page.
     pub(crate) pwa: Option<Pwa>,
+    /// When true (`[i18n] static = true`), `webc build` emits one static page
+    /// per locale: the default locale at the root, every other locale under a
+    /// `/{locale}/` prefix, plus `hreflang` alternate links. Off by default.
+    pub(crate) i18n_static: bool,
 }
 
 /// Resolved Progressive-Web-App settings (opt-in via a `[pwa]` section).
@@ -37,6 +41,15 @@ struct WebcToml {
     app: Option<AppSection>,
     fmt: Option<FmtSection>,
     pwa: Option<PwaSection>,
+    i18n: Option<I18nSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct I18nSection {
+    /// Opt-in: generate one static HTML page per locale (default at root,
+    /// others under `/{locale}/`) with `hreflang` alternates.
+    #[serde(rename = "static")]
+    static_pages: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,6 +136,12 @@ pub(crate) fn read_config() -> Result<Config, String> {
         }
     });
 
+    let i18n_static = parsed
+        .i18n
+        .as_ref()
+        .and_then(|i| i.static_pages)
+        .unwrap_or(false);
+
     Ok(Config {
         app_title,
         app_lang,
@@ -132,6 +151,7 @@ pub(crate) fn read_config() -> Result<Config, String> {
         csp,
         fmt_indent,
         pwa,
+        i18n_static,
     })
 }
 
@@ -147,6 +167,7 @@ pub(crate) fn load_config() -> Result<Config, String> {
             csp: false,
             fmt_indent: None,
             pwa: None,
+            i18n_static: false,
         });
     }
     read_config()

@@ -1,0 +1,17 @@
+component IslandDemo {
+    state { count: Number = 0 }
+    on:mount {
+        const s = document.querySelector('.island-demo .island-status');
+        if (s) { s.classList.add('hydrated'); s.textContent = '✓ Hydrated — on:mount ran on scroll'; }
+    }
+    view {
+        div class="island-demo" {
+            span class="island-status" { "◷ Static — scroll down to hydrate" }
+            p class="island-count" { "Interactive after hydration · clicks: {count}" }
+            button class="btn btn-primary" on:click={count += 1} { "+1" }
+        }
+    }
+    style {
+        .island-count { color: var(--color-muted); font-size: 0.9rem; font-family: var(--font-mono); }
+    }
+}

@@ -54,11 +54,20 @@ impl ParseError {
                 .unwrap_or("parse error")
                 .to_string()
         });
-        if let Some(hint) = parse_hint(&self.message) {
+        if let Some((_, hint)) = parse_hint(&self.message) {
             msg.push_str(" — hint: ");
             msg.push_str(hint);
         }
         msg
+    }
+
+    /// Stable diagnostic code (`WCxxxx`) for this error, used in editor/JSON
+    /// output. Falls back to the generic `WC1000` when the failure doesn't
+    /// match a known pattern.
+    pub(crate) fn code(&self) -> &'static str {
+        parse_hint(&self.message)
+            .map(|(code, _)| code)
+            .unwrap_or("WC1000")
     }
 }
 
@@ -78,17 +87,63 @@ pub(crate) fn extract_expected_clause(pest_msg: &str) -> Option<String> {
         })
 }
 
-pub(crate) fn parse_hint(msg: &str) -> Option<&'static str> {
+/// Map a raw Pest failure to a stable diagnostic code (`WCxxxx`) and a
+/// human-readable hint. Ordered most-specific first so a precise rule name
+/// (e.g. `keyframes_name`, `type_name`) wins over broader ones.
+pub(crate) fn parse_hint(msg: &str) -> Option<(&'static str, &'static str)> {
     if msg.contains("interp_expr") {
-        Some("{} est vide — écris {maVar} ou utilise un attribut string: attr=\"valeur\"")
+        Some((
+            "WC1001",
+            "{} est vide — écris {maVar} ou utilise un attribut string: attr=\"valeur\"",
+        ))
+    } else if msg.contains("keyframes_name") {
+        Some((
+            "WC1010",
+            "nom d'@keyframes invalide — lettres/chiffres/_/-, commençant par une lettre (ex: spin-cw)",
+        ))
+    } else if msg.contains("type_name") {
+        Some((
+            "WC1011",
+            "un état doit déclarer son type, ex: `count: Number = 0` (Number, String, Boolean, List…)",
+        ))
+    } else if msg.contains("attr_value") {
+        Some((
+            "WC1012",
+            "un attribut prend une valeur: attr=\"texte\", attr={expr} ou attr=true (pas d'attribut booléen nu)",
+        ))
+    } else if msg.contains("route_entry") {
+        Some((
+            "WC1013",
+            "une route par ligne: \"/\": HomePage (pas de virgule entre les routes)",
+        ))
+    } else if msg.contains("selector")
+        || msg.contains("keyframes_block")
+        || msg.contains("media_block")
+    {
+        Some((
+            "WC1014",
+            "sélecteur CSS ou @media/@keyframes attendu dans style { } — vérifie l'accolade précédente",
+        ))
     } else if msg.contains("expected element") {
-        Some("accolade fermante manquante ? Chaque bloc { doit être fermé par }")
+        Some((
+            "WC1002",
+            "accolade fermante manquante ? Chaque bloc { doit être fermé par }",
+        ))
     } else if msg.contains("string_literal") {
-        Some("valeur texte attendue entre guillemets, ex: \"ma valeur\"")
+        Some((
+            "WC1003",
+            "valeur texte attendue entre guillemets, ex: \"ma valeur\"",
+        ))
     } else if msg.contains("expression_content") {
-        Some("expression JS attendue, ex: on:click={count += 1}")
+        Some((
+            "WC1004",
+            "expression JS attendue, ex: on:click={count += 1}",
+        ))
     } else if msg.contains("identifier") {
-        Some("nom attendu (lettres, chiffres, _) sans guillemets ni espaces")
+        Some((
+            "WC1005",
+            "nom attendu (lettres, chiffres, _) sans guillemets ni espaces",
+        ))
     } else {
         None
     }
@@ -103,12 +158,14 @@ impl std::fmt::Display for ParseError {
             ("", "", "", "", "")
         };
 
+        let hint = parse_hint(&self.message);
+        let code = hint.map(|(c, _)| c).unwrap_or("parse");
         if let (Some(span), Some(src)) = (&self.span, &self.source_line) {
             let loc = match &self.file {
                 Some(p) => format!("{}:{}:{}", p.display(), span.line, span.col),
                 None => format!("{}:{}", span.line, span.col),
             };
-            writeln!(f, "{bold_red}error[parse]{reset}: {bold}{loc}{reset}")?;
+            writeln!(f, "{bold_red}error[{code}]{reset}: {bold}{loc}{reset}")?;
 
             let col0 = (span.col as usize).saturating_sub(1);
             writeln!(f, "  {cyan}|{reset}")?;
@@ -118,12 +175,12 @@ impl std::fmt::Display for ParseError {
             if let Some(clause) = extract_expected_clause(&self.message) {
                 write!(f, " {clause}")?;
             }
-            if let Some(hint) = parse_hint(&self.message) {
+            if let Some((_, hint)) = hint {
                 write!(f, "\n  {cyan}|{reset}\n  = {bold}hint{reset}: {hint}")?;
             }
             Ok(())
         } else {
-            write!(f, "{bold_red}error[parse]{reset}: {}", self.message)
+            write!(f, "{bold_red}error[{code}]{reset}: {}", self.message)
         }
     }
 }
@@ -378,6 +435,39 @@ layout Mixed {
         } else {
             panic!("expected Tag element");
         }
+    }
+
+    #[test]
+    fn parse_error_carries_stable_code_and_hint() {
+        // #48 — an unquoted page name (expects a string literal) yields a stable
+        // `WCxxxx` code and a hint threaded into the concise message.
+        let err = parse_webc("page home { }\n").unwrap_err();
+        assert_eq!(err.code(), "WC1003", "raw: {}", err.message);
+        assert!(
+            err.concise_message().contains("hint:"),
+            "concise message should carry the hint: {}",
+            err.concise_message()
+        );
+    }
+
+    #[test]
+    fn unknown_failure_falls_back_to_generic_code() {
+        // A failure with no matching pattern still gets the generic WC1000.
+        assert_eq!(parse_hint("some unmatched pest noise"), None);
+    }
+
+    #[test]
+    fn parse_hint_maps_known_rules_to_stable_codes() {
+        // #48 — the stable code scheme is deterministic per known rule.
+        assert_eq!(
+            parse_hint("expected keyframes_name").map(|h| h.0),
+            Some("WC1010")
+        );
+        assert_eq!(
+            parse_hint("expected string_literal").map(|h| h.0),
+            Some("WC1003")
+        );
+        assert_eq!(parse_hint("expected element").map(|h| h.0), Some("WC1002"));
     }
 
     #[test]

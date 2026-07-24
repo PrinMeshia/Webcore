@@ -25,6 +25,7 @@ fn opts() -> HtmlPageOptions {
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     }
 }
 
@@ -132,6 +133,54 @@ page "home" { Counter {} }
     );
 }
 
+#[test]
+fn golden_component_state_scoped_no_collision() {
+    // Two components declaring the same state name (`open`) must not collide in
+    // the shared runtime store after the scoping pass (#42).
+    let src = r#"
+layout MainLayout { main { slot content } }
+component Nav {
+    state { open: Boolean = false }
+    view { button on:click={open = !open} { "menu" } }
+}
+component Palette {
+    state { open: Boolean = false }
+    on:mount { if (S.get('open')) { return; } S.set('open', true); }
+    view { div class:active={open} { "p" } }
+}
+page "home" { Nav {} Palette {} }
+"#;
+    let mut doc = parse_webc(src).expect("parse");
+    crate::core::scope::scope_component_state(&mut doc);
+    let res = generate_html(&doc, "home", &opts()).expect("codegen");
+    let js = generate_runtime_js(&res.handlers, &doc);
+
+    // Distinct, per-component keys in state init.
+    assert!(
+        js.contains("S.set('Nav__open',false)"),
+        "Nav__open init missing:\n{js}"
+    );
+    assert!(
+        js.contains("S.set('Palette__open',false)"),
+        "Palette__open init missing:\n{js}"
+    );
+    // The Nav click handler toggles its own scoped key.
+    assert!(
+        js.contains("S.get('Nav__open')"),
+        "Nav handler not scoped:\n{js}"
+    );
+    // Raw `on:mount` store calls are rewritten to the component's scoped key.
+    assert!(
+        js.contains("S.get('Palette__open')") && js.contains("S.set('Palette__open', true)"),
+        "on:mount store calls not scoped:\n{js}"
+    );
+    // No un-scoped `open` key survives to collide.
+    assert!(
+        !js.contains("S.set('open'") && !js.contains("S.get('open')"),
+        "un-scoped `open` key still present (collision risk):\n{js}"
+    );
+}
+
 // ── CSS codegen ────────────────────────────────────────────────────────────
 
 #[test]
@@ -186,6 +235,82 @@ fn golden_scoped_css_emits_data_v_selector() {
         css
     );
     assert!(css.contains("color: red") || css.contains("color:red"));
+}
+
+#[test]
+fn golden_scoped_css_matches_component_root() {
+    // A rule targeting the component's own root element must be emitted as a
+    // compound `sel[data-v]` selector (matches the root, which carries data-v),
+    // not a descendant `[data-v] sel` one which never matches the root (#43).
+    let mut doc = WebCoreDocument {
+        app: None,
+        store: vec![],
+        store_computed: vec![],
+        locales: std::collections::BTreeMap::new(),
+        default_locale: String::new(),
+        wasm_module: None,
+        layouts: std::collections::BTreeMap::new(),
+        pages: std::collections::BTreeMap::new(),
+        components: std::collections::BTreeMap::new(),
+        imports: vec![],
+        data_imports: std::collections::BTreeMap::new(),
+        component_imports: vec![],
+        page_imports: std::collections::BTreeMap::new(),
+        source_files: std::collections::BTreeMap::new(),
+    };
+    doc.components.insert(
+        "Card".into(),
+        Component {
+            name: "Card".into(),
+            props: vec![],
+            state: vec![],
+            computed: vec![],
+            mount_body: None,
+            destroy_body: None,
+            watch_hooks: vec![],
+            http: None,
+            view: vec![],
+            style: vec![
+                crate::core::ast::StyleItem::Rule(crate::core::ast::StyleRule {
+                    selector: ".card".into(),
+                    properties: vec![crate::core::ast::StyleProperty {
+                        name: "display".into(),
+                        value: "flex".into(),
+                        span: Span::default(),
+                    }],
+                    nested: vec![],
+                    span: Span::default(),
+                }),
+                crate::core::ast::StyleItem::Rule(crate::core::ast::StyleRule {
+                    selector: ".card .title".into(),
+                    properties: vec![crate::core::ast::StyleProperty {
+                        name: "color".into(),
+                        value: "red".into(),
+                        span: Span::default(),
+                    }],
+                    nested: vec![],
+                    span: Span::default(),
+                }),
+            ],
+            span: Span::default(),
+        },
+    );
+    let css = generate_combined_css(None, &doc);
+    // Root rule: compound form that matches the root element.
+    assert!(
+        css.contains(".card[data-v="),
+        "root selector not scoped as compound (won't match root):\n{css}"
+    );
+    // Descendant rule: attribute appended to the subject (`.title`), still scoped.
+    assert!(
+        css.contains(".title[data-v="),
+        "descendant subject not scoped:\n{css}"
+    );
+    // The old descendant-prefix form must be gone.
+    assert!(
+        !css.contains("] .card"),
+        "descendant-only root scoping still present:\n{css}"
+    );
 }
 
 // ── Props inter-composants ─────────────────────────────────────────────────
@@ -494,7 +619,13 @@ page "home" { h1 "hi" }
     assert!(js.contains("Bienvenue"), "translation missing:\n{}", js);
     assert!(js.contains("Compteur"), "translation missing:\n{}", js);
     assert!(js.contains("const t="), "t() missing:\n{}", js);
-    assert!(js.contains("let LOCALE=\"fr\""), "LOCALE missing:\n{}", js);
+    // LOCALE now initializes from the pre-rendered <html lang>, falling back to
+    // the default locale (SSG per-locale pages, #46).
+    assert!(
+        js.contains("let LOCALE=(LOCALES[document.documentElement.lang]?document.documentElement.lang:\"fr\")"),
+        "LOCALE init missing:\n{}",
+        js
+    );
     assert!(
         js.contains("const setLocale="),
         "setLocale missing:\n{}",
@@ -571,6 +702,278 @@ page "home" { p "{t("welcome")}" }
         ssg.contains("Bienvenue"),
         "translation not pre-rendered:\n{}",
         ssg
+    );
+}
+
+#[test]
+fn golden_i18n_hreflang_and_lang_per_locale() {
+    // #46 — a localized page carries the locale as its <html lang> and emits
+    // <link rel="alternate" hreflang> for every locale plus x-default, with the
+    // content pre-rendered in that locale.
+    let src = r##"
+layout MainLayout { main { slot content } }
+page "home" { h1 "{t("welcome")}" }
+"##;
+    let mut doc = parse_webc(src).expect("parse");
+    let mut fr: BTreeMap<String, String> = BTreeMap::new();
+    fr.insert("welcome".into(), "Bienvenue".into());
+    let mut en: BTreeMap<String, String> = BTreeMap::new();
+    en.insert("welcome".into(), "Welcome".into());
+    doc.locales.insert("fr".into(), fr);
+    doc.locales.insert("en".into(), en);
+    doc.default_locale = "fr".into();
+
+    let state = crate::core::ssg::build_initial_state(&doc);
+    let en_ssg = crate::core::ssg::SsgContext {
+        state: &state,
+        locales: &doc.locales,
+        locale: "en",
+    };
+    let opts_en = crate::codegen::html::HtmlPageOptions {
+        lang: "en".into(),
+        hreflang_alternates: vec![
+            ("fr".into(), "https://example.com/".into()),
+            ("en".into(), "https://example.com/en/".into()),
+            ("x-default".into(), "https://example.com/".into()),
+        ],
+        ..opts()
+    };
+    let html = crate::codegen::html::generate_page(&doc, "home", &opts_en, None, Some(&en_ssg))
+        .expect("codegen")
+        .html;
+    assert!(html.contains("<html lang=\"en\">"), "wrong lang:\n{html}");
+    assert!(
+        html.contains("Welcome"),
+        "EN content not pre-rendered:\n{html}"
+    );
+    assert!(
+        html.contains(r#"<link rel="alternate" hreflang="fr" href="https://example.com/">"#),
+        "fr alternate missing:\n{html}"
+    );
+    assert!(
+        html.contains(r#"<link rel="alternate" hreflang="en" href="https://example.com/en/">"#),
+        "en alternate missing:\n{html}"
+    );
+    assert!(
+        html.contains(r#"<link rel="alternate" hreflang="x-default" href="https://example.com/">"#),
+        "x-default alternate missing:\n{html}"
+    );
+}
+
+#[test]
+fn golden_island_wraps_component_and_defers_hydration() {
+    // #50 — a component instance with `client="visible"` is wrapped in an
+    // island marker (statically pre-rendered), and the runtime gains the
+    // deferred-hydration machinery: root-scoped bind passes, the `_ip` skip
+    // guard, an IntersectionObserver/requestIdleCallback scheduler, and the
+    // component's on:mount moved into the deferred `MB` map.
+    let src = r##"
+component Counter {
+    state { count: Number = 0 }
+    on:mount { console.log("mounted") }
+    view {
+        div {
+            p "Compteur : {count}"
+            button on:click={count += 1} { "+" }
+        }
+    }
+}
+layout MainLayout { main { slot content } }
+page "home" {
+    h1 "Statique"
+    Counter client="visible" {}
+}
+"##;
+    let (html, js) = compile_full(src);
+
+    // HTML: island wrapper with strategy + component name, content still inline.
+    assert!(
+        html.contains(r#"<div data-webcore-island="visible" data-webcore-island-comp="Counter" style="display:contents">"#),
+        "island wrapper missing:\n{html}"
+    );
+    assert!(
+        html.contains("Compteur :"),
+        "island content not pre-rendered:\n{html}"
+    );
+
+    // JS: partial-hydration machinery.
+    assert!(
+        js.contains("const _ip=el=>{const i=el.closest('[data-webcore-island]')"),
+        "skip guard _ip missing"
+    );
+    // Scheduler is reusable (also runs after SPA navigation), not inline-once.
+    assert!(
+        js.contains("const _si="),
+        "reusable island scheduler _si missing"
+    );
+    assert!(
+        js.contains("const bind=(root=document)=>"),
+        "bind() not root-aware:\n{js}"
+    );
+    assert!(
+        js.contains("IntersectionObserver") && js.contains("requestIdleCallback"),
+        "island scheduler missing:\n{js}"
+    );
+    // on:mount deferred into MB, not run eagerly at load.
+    assert!(
+        js.contains("const MB={\"Counter\":"),
+        "deferred mount map missing:\n{js}"
+    );
+    assert!(
+        !js.contains(";(()=>{\nconsole.log(\"mounted\")\n})()"),
+        "island on:mount must not run eagerly:\n{js}"
+    );
+}
+
+#[test]
+fn golden_island_mixed_usage_keeps_eager_mount() {
+    // #50 — a component used BOTH eagerly and as an island must keep its
+    // on:mount at load (the shared runtime is site-wide; deferring it would
+    // drop the eager instances' mount). So it is NOT in the MB deferred map and
+    // its mount runs eagerly.
+    let src = r##"
+component Card {
+    state { n: Number = 0 }
+    on:mount { window.__card = 1 }
+    view { div { p "{n}" } }
+}
+layout MainLayout { main { slot content } }
+page "home" {
+    Card {}
+    Card client="visible" {}
+}
+"##;
+    let js = compile_to_js(src);
+    assert!(
+        js.contains("data-webcore-island"),
+        "island scheduler expected"
+    );
+    // Card also used eagerly → not deferred → empty MB, eager mount present.
+    assert!(
+        js.contains("const MB={}"),
+        "Card must not be deferred:\n{js}"
+    );
+    assert!(
+        js.contains("window.__card = 1"),
+        "eager mount body must still run at load:\n{js}"
+    );
+}
+
+#[test]
+fn golden_island_scheduler_reruns_after_spa_navigation() {
+    // #50 — with SPA routing, island hydration must be (re)scheduled after
+    // navigation, not only at DOMContentLoaded, so islands on navigated-to
+    // pages hydrate. The `nav` function must call `_si()`.
+    let src = r##"
+component Counter {
+    state { count: Number = 0 }
+    view { div { p "{count}" button on:click={count += 1} { "+" } } }
+}
+layout MainLayout { main { slot content } }
+app Demo {
+    layout: MainLayout
+    routes {
+        "/": HomePage
+        "/x": XPage
+    }
+}
+page "home" { h1 "H" }
+page "x" { Counter client="idle" {} }
+"##;
+    let doc = parse_webc(src).expect("parse");
+    let js = generate_runtime_js(&[], &doc);
+    assert!(js.contains("const _si="), "reusable scheduler missing");
+    // The nav function re-runs the scheduler after swapping content.
+    assert!(
+        js.contains("_si();window.__wcAfterNav"),
+        "nav must re-run island scheduler:\n{js}"
+    );
+}
+
+#[test]
+fn golden_no_islands_keeps_runtime_lean() {
+    // Without any `client="…"` directive the island machinery is fully
+    // tree-shaken — the bind passes keep their zero-arg signatures.
+    let src = r##"
+component Counter {
+    state { count: Number = 0 }
+    view { div { p "{count}" button on:click={count += 1} { "+" } } }
+}
+layout MainLayout { main { slot content } }
+page "home" { Counter {} }
+"##;
+    let js = compile_to_js(src);
+    assert!(
+        !js.contains("_ip"),
+        "island guard leaked into non-island runtime"
+    );
+    assert!(
+        !js.contains("data-webcore-island"),
+        "island scheduler leaked into non-island runtime"
+    );
+    assert!(
+        js.contains("const bind=()=>"),
+        "non-island bind() should keep its zero-arg signature:\n{js}"
+    );
+}
+
+#[test]
+fn golden_ssg_prerenders_interpolated_attribute() {
+    // #45 — a dynamic attribute whose expression is statically known must be
+    // emitted as a real attribute in the SSG HTML (crawlers, screen readers,
+    // no-JS), alongside the `data-webcore-attr-*` binding used at runtime.
+    let src = r##"
+layout MainLayout { main { slot content } }
+page "home" {
+    a href="/cv.pdf" aria-label={t("nav_cv")} { "CV" }
+}
+"##;
+    let mut doc = parse_webc(src).expect("parse");
+    let mut fr: BTreeMap<String, String> = BTreeMap::new();
+    fr.insert("nav_cv".to_string(), "Télécharger le CV (PDF)".to_string());
+    doc.locales.insert("fr".to_string(), fr);
+    doc.default_locale = "fr".to_string();
+
+    let state = crate::core::ssg::build_initial_state(&doc);
+    let ssg_ctx = crate::core::ssg::SsgContext {
+        state: &state,
+        locales: &doc.locales,
+        locale: "fr",
+    };
+    let ssg = crate::codegen::html::generate_page(&doc, "home", &opts(), None, Some(&ssg_ctx))
+        .expect("codegen")
+        .html;
+    // Static value present for no-JS / SEO...
+    assert!(
+        ssg.contains(r#"aria-label="Télécharger le CV (PDF)""#),
+        "interpolated attribute not pre-rendered:\n{ssg}"
+    );
+    // ...and the runtime binding is still there for reactive locale switching.
+    assert!(
+        ssg.contains("data-webcore-attr-aria-label=\""),
+        "runtime attr binding missing:\n{ssg}"
+    );
+}
+
+#[test]
+fn golden_dynamic_attribute_without_ssg_omits_static_value() {
+    // Without an SsgContext (or when the expression is not statically known),
+    // only the runtime binding is emitted — no bogus static attribute.
+    let src = r##"
+layout MainLayout { main { slot content } }
+page "home" {
+    a href="/cv.pdf" aria-label={someRuntimeVar} { "CV" }
+}
+"##;
+    let doc = parse_webc(src).expect("parse");
+    let html = generate_html(&doc, "home", &opts()).expect("codegen").html;
+    assert!(
+        html.contains("data-webcore-attr-aria-label=\""),
+        "runtime attr binding missing:\n{html}"
+    );
+    assert!(
+        !html.contains(r#" aria-label=""#),
+        "unexpected static aria-label emitted without SSG:\n{html}"
     );
 }
 
@@ -1135,9 +1538,11 @@ fn golden_error_message_no_color_format() {
         !display.contains('\x1b'),
         "ANSI escape found despite NO_COLOR: {display}"
     );
+    // #48 — a recognised failure carries a stable `WCxxxx` code in the header
+    // (invalid identifier → WC1005); unmatched failures fall back to `error[parse]`.
     assert!(
-        display.contains("error[parse]"),
-        "structured prefix missing: {display}"
+        display.contains("error[WC1005]"),
+        "structured code-bearing prefix missing: {display}"
     );
     assert!(display.contains('^'), "caret missing: {display}");
 }
@@ -1717,6 +2122,7 @@ page "dash" { App {} }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "dash", &opts_dash).expect("codegen");
     assert!(
@@ -2217,6 +2623,64 @@ page "home" { main { Spin {} } }
 }
 
 #[test]
+fn golden_keyframes_name_accepts_hyphen() {
+    // #47 — CSS animation names may contain hyphens (e.g. `spin-cw`), unlike
+    // WebCore identifiers. The grammar must accept them in `@keyframes`.
+    let src = r#"
+component Spin {
+    style {
+        @keyframes spin-cw {
+            from { transform: rotate(0deg) }
+            to { transform: rotate(360deg) }
+        }
+        .icon { animation: spin-cw 1s linear infinite }
+    }
+    view { div class="icon" "X" }
+}
+layout MainLayout { main { slot content } }
+page "home" { main { Spin {} } }
+"#;
+    let doc = parse_webc(src).expect("hyphenated @keyframes must parse");
+    let css = generate_combined_css(None, &doc);
+    assert!(
+        css.contains("@keyframes spin-cw"),
+        "hyphenated keyframes: {css}"
+    );
+    assert!(
+        css.contains("animation: spin-cw") || css.contains("animation:spin-cw"),
+        "animation ref preserved: {css}"
+    );
+}
+
+#[test]
+fn golden_multiline_selector_list_parses_and_scopes() {
+    // #47 — a comma-separated selector list split across lines must parse, and
+    // each part gets scoped independently.
+    let src = "
+component Btn {
+    style {
+        .b:hover,
+        .b.active { color: red; }
+    }
+    view { button class=\"b\" \"x\" }
+}
+layout MainLayout { main { slot content } }
+page \"home\" { main { Btn {} } }
+";
+    let doc = parse_webc(src).expect("multi-line selector must parse");
+    let css = generate_combined_css(None, &doc);
+    // Both parts of the list are scoped to the component.
+    assert!(
+        css.contains(".b[data-v") && css.contains(":hover"),
+        ":hover part scoped: {css}"
+    );
+    assert!(
+        css.contains(".b.active[data-v"),
+        ".active part scoped: {css}"
+    );
+}
+
+#[test]
 fn golden_script_tag_has_defer() {
     let src = r#"
 component Counter {
@@ -2453,6 +2917,7 @@ page "home" { main { Card {} } }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     assert!(
@@ -2647,6 +3112,7 @@ page "home" { p "hello" }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     assert!(
@@ -2757,6 +3223,7 @@ page "home" { p "hi" }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     // Deferred link uses data-webcore-defer (not onload=)
@@ -2803,6 +3270,7 @@ page "home" { main { h1 "Static" } }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     // v3: JS is inlined per-page; the DOMContentLoaded handler swaps media="print"→"all"
@@ -2855,6 +3323,7 @@ page "home" { main { p "hi" } }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     assert!(
@@ -3347,7 +3816,9 @@ page "home" { p "x" }
 
     let js = generate_runtime_js(&[], &doc);
     // Extract the three self-contained i18n statements from the runtime.
-    let mut script = String::new();
+    // The LOCALE initializer reads `document.documentElement.lang`; shim a
+    // minimal `document` so it falls back to the default locale under node.
+    let mut script = String::from("const document={documentElement:{lang:''}};\n");
     for needle in ["const LOCALES=", "let LOCALE=", "const t="] {
         let line = js
             .lines()
@@ -3953,6 +4424,7 @@ page "home" { Ticker {} }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let html = generate_html(&doc, "home", &prod_opts)
         .expect("codegen")
@@ -4141,6 +4613,7 @@ page "home" { Counter {} }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     assert!(
@@ -4185,6 +4658,7 @@ page "home" { Counter {} }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     assert!(
@@ -4278,6 +4752,7 @@ page "home" { Counter {} }
         site_url: None,
         canonical: None,
         pwa: None,
+        hreflang_alternates: vec![],
     };
     let res = generate_html(&doc, "home", &options).expect("codegen");
     assert!(
@@ -4420,4 +4895,46 @@ page "home" { Toggle {} }
         html.contains("()=>S.get('open')"),
         "expr-map must contain the single-wrapped closure:\n{html}"
     );
+}
+
+#[test]
+fn golden_a11y_lints_the_three_rules() {
+    // `--a11y` flags exactly the real issues: image without alt (1.1), label
+    // without `for` (11.1), control without an accessible name (6.1) — and never
+    // the correct forms (decorative `alt=""`/`aria-hidden`, labelled control…).
+    let src = r#"
+layout MainLayout { main { slot content } }
+page "home" {
+    img src="/a.svg"
+    img src="/b.svg" alt=""
+    img src="/c.svg" aria-hidden="true"
+    label { "Nom" }
+    label for="e" { "Email" }
+    input id="e" type="text"
+    button { }
+    button { "OK" }
+    a href="/x" aria-label="Accueil" { }
+}
+"#;
+    let doc = parse_webc(src).expect("parse");
+    let issues = crate::cli::a11y::lint(&doc);
+    let codes: Vec<&str> = issues.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&"a11y-img-alt"),
+        "missing img-alt: {codes:?}"
+    );
+    assert!(
+        codes.contains(&"a11y-label-for"),
+        "missing label-for: {codes:?}"
+    );
+    assert!(
+        codes.contains(&"a11y-control-name"),
+        "missing control-name: {codes:?}"
+    );
+    // Exactly three: decorative img/aria-hidden, `for=`, text button and the
+    // aria-labelled link must NOT be flagged.
+    assert_eq!(issues.len(), 3, "unexpected findings: {codes:?}");
+    // Findings carry a precise line (the file path is attached by the loader,
+    // not the bare parser used in this unit test).
+    assert!(issues.iter().all(|d| d.line.is_some()));
 }

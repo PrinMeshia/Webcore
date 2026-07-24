@@ -1,0 +1,83 @@
+page "islands" {
+    div class="page-header" {
+        span class="page-header-badge" { "▸ Guide · 4.0" }
+        h1 { "Islands — partial hydration" }
+        p class="page-sub" {
+            "Render a component statically and hydrate it only when it's actually needed — on idle, or when it scrolls into view. Heavy widgets stop blocking first paint."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "The directive" }
+        p {
+            "Add a "
+            code { "client" }
+            " attribute to a component instance. Three strategies are available:"
+        }
+        div class="table-wrap" {
+            table {
+                thead { tr { th { "Strategy" } th { "Hydrates…" } th { "Uses" } } }
+                tbody {
+                    tr { td { code { "client=\"load\"" } } td { "immediately (default when omitted)" } td { "—" } }
+                    tr { td { code { "client=\"idle\"" } } td { "when the browser is idle" } td { code { "requestIdleCallback" } } }
+                    tr { td { code { "client=\"visible\"" } } td { "when it scrolls into the viewport" } td { code { "IntersectionObserver" } } }
+                }
+            }
+        }
+        pre class="code-block" data-lang="webc" {
+"page \"home\" {
+    Hero {}                            // eager (above the fold)
+    HeavyChart client=\"visible\" {}     // hydrates on scroll
+    Newsletter client=\"idle\" {}        // hydrates when idle
+}"
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "What \"hydration\" defers" }
+        p { "Until an island hydrates:" }
+        ul {
+            li { "its reactive bindings (interpolations, " code { "@if" } ", " code { "@for" } ", attribute & class bindings) are " strong { "not" } " wired;" }
+            li { "its " code { "on:mount" } " does " strong { "not" } " run;" }
+            li { "but the pre-rendered HTML is fully painted, and " strong { "event handlers still fire" } " — they're delegated at the document level." }
+        }
+        p { "On trigger, the island is marked ready, its subtree is bound, and the component's " code { "on:mount" } " runs once." }
+        div class="callout callout-tip" {
+            strong { "Zero cost when unused. " }
+            "Projects without any " code { "client=" } " directive emit a byte-for-byte identical runtime — the island machinery is fully tree-shaken."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "SPA navigation & mount" }
+        p {
+            "Islands are re-scheduled after client-side navigation, so an island on a navigated-to page hydrates correctly. A component's "
+            code { "on:mount" }
+            " is deferred only when the component is used "
+            strong { "exclusively" }
+            " as an island — a component also used eagerly keeps its mount at load, so its eager instances are never dropped."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "When to reach for islands" }
+        ul {
+            li { "Below-the-fold widgets: charts, maps, carousels, comment threads." }
+            li { "Expensive " code { "on:mount" } " work: canvas / WebGL, animations, third-party embeds." }
+            li { "Long lists or dashboards that aren't interactive until scrolled to." }
+        }
+        div class="callout callout-warning" {
+            strong { "Caveat: " }
+            "a "
+            code { "client=\"visible\"" }
+            " island whose root renders no element box falls back to idle hydration. Give islands a real wrapping element."
+        }
+        p {
+            "See also the "
+            a href="/i18n" { "i18n guide" }
+            " and the "
+            a href="/features" { "full 4.0 feature list" }
+            "."
+        }
+    }
+}

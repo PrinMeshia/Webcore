@@ -35,8 +35,8 @@ pub(crate) use sourcemap::{Mapping as SourceMapMapping, SourceMapBuilder};
 use crate::codegen::html::HandlerMapping;
 use crate::core::ast::{Span, WebCoreDocument};
 use js_dom::{
-    collect_component_event_listeners, collect_on_destroy_bodies, collect_on_mount_bodies,
-    detect_features, rebind_seq_v3,
+    collect_component_event_listeners, collect_deferred_mount_components,
+    collect_on_destroy_bodies, collect_on_mount_bodies, detect_features, rebind_seq_v3,
 };
 use js_events::{compile_expression_full, replace_utils_short, CompiledVars};
 use js_runtime::{emit_bind_fns_v3, emit_state_class};
@@ -223,6 +223,9 @@ fn generate_runtime_js_with_vars_and_exprs(
 
     // Build rebind sequence using v3 calls (bind(), bindIf(), etc.)
     let all_rebinds = rebind_seq_v3(&features, needs_bind);
+    // Islands (#50): `;_si()` (re)schedules island hydration; injected into the
+    // DOMContentLoaded boot and after SPA navigation. Empty without islands.
+    let island_boot = if features.has_islands { ";_si()" } else { "" };
 
     let mut js = String::new();
 
@@ -318,9 +321,13 @@ fn generate_runtime_js_with_vars_and_exprs(
         locale_entries.sort();
         writeln!(js, "const LOCALES={{{}}};", locale_entries.join(","))
             .expect("write! to String is infallible");
+        // Initial locale: honour the pre-rendered `<html lang>` when it names a
+        // known locale (SSG per-locale pages set it, e.g. `/en/` → lang="en"),
+        // so hydration keeps the language the page was rendered in instead of
+        // flashing back to the default. Falls back to the default locale.
         writeln!(
             js,
-            "let LOCALE=\"{}\";",
+            "let LOCALE=(LOCALES[document.documentElement.lang]?document.documentElement.lang:\"{}\");",
             escape_js_str(&document.default_locale)
         )
         .expect("write! to String is infallible");
@@ -388,9 +395,16 @@ fn generate_runtime_js_with_vars_and_exprs(
     }
 
     // ── bind() — v3: uses _e[id]() for interpolation spans ───────────────────
+    // Islands (#50): mirror the root/guard signature used by the other bind
+    // passes so a single island subtree can be hydrated on its own.
+    let (bind_sig, bind_root, bind_guard) = if features.has_islands {
+        ("(root=document)", "root", "if(_ip(el))return;")
+    } else {
+        ("()", "document", "")
+    };
     if needs_bind {
         if features.has_interpolation {
-            js.push_str("const bind=()=>{");
+            write!(js, "const bind={bind_sig}=>{{").expect("write! to String is infallible");
             if has_computed {
                 js.push_str("rebindComputed();");
             }
@@ -400,8 +414,7 @@ fn generate_runtime_js_with_vars_and_exprs(
                 ""
             };
             write!(js,
-                "document.querySelectorAll('[data-webcore-interpolation]').forEach(el=>{{const id=el.dataset.webcoreInterpolation,fn=_e[id],u=()=>{{{}el.textContent=String(fn?.()??'')}};$effect(u)}})}};\n\n",
-                recompute_in_u
+                "{bind_root}.querySelectorAll('[data-webcore-interpolation]').forEach(el=>{{{bind_guard}const id=el.dataset.webcoreInterpolation,fn=_e[id],u=()=>{{{recompute_in_u}el.textContent=String(fn?.()??'')}};$effect(u)}})}};\n\n"
             ).expect("write! to String is infallible");
         } else {
             js.push_str("const bind=()=>rebindComputed();\n\n");
@@ -466,7 +479,7 @@ fn generate_runtime_js_with_vars_and_exprs(
         js.push_str("const doc=new DOMParser().parseFromString(html,'text/html');\n");
         js.push_str("const main=doc.querySelector('main');\n");
         js.push_str("if(main)document.querySelector('main').replaceWith(main);\n");
-        write!(js, "if(init)history.replaceState({{}},'',p);else history.pushState({{}},'',p);{all_rebinds};window.__wcAfterNav?.();}}catch(e){{location.href='/'+file}}}};\n\n").expect("write! to String is infallible");
+        write!(js, "if(init)history.replaceState({{}},'',p);else history.pushState({{}},'',p);{all_rebinds}{island_boot};window.__wcAfterNav?.();}}catch(e){{location.href='/'+file}}}};\n\n").expect("write! to String is infallible");
         js.push_str("addEventListener('popstate',()=>nav(location.pathname));\n\n");
     }
 
@@ -518,6 +531,66 @@ fn generate_runtime_js_with_vars_and_exprs(
     let mount_bodies = collect_on_mount_bodies(document);
     let comp_listeners = collect_component_event_listeners(document);
 
+    // Islands (#50): components used *exclusively* as `client="idle"` /
+    // `client="visible"` islands defer their `on:mount` to hydration time (`MB`
+    // map). A component also used eagerly keeps its mount at load, so its eager
+    // instances aren't dropped by the shared runtime.
+    let deferred_mount_comps = if features.has_islands {
+        collect_deferred_mount_components(document)
+    } else {
+        std::collections::BTreeSet::new()
+    };
+    if features.has_islands {
+        let deferred: Vec<&(String, String)> = mount_bodies
+            .iter()
+            .filter(|(name, _)| deferred_mount_comps.contains(name))
+            .collect();
+        js.push_str("const MB={");
+        for (name, body) in &deferred {
+            write!(
+                js,
+                "\"{}\":()=>{{\n{}\n}},",
+                escape_js_str(name),
+                body.trim()
+            )
+            .expect("write! to String is infallible");
+        }
+        js.push_str("};\n");
+
+        // Rooted hydration sequence for a single island subtree (root-aware
+        // passes only — validation/defer stay global to avoid double-wiring).
+        let island_hydrate = {
+            let mut parts: Vec<&str> = Vec::new();
+            if needs_bind {
+                parts.push("bind(el)");
+            }
+            if features.has_if {
+                parts.push("bindIf(el)");
+            }
+            if features.has_for {
+                parts.push("bindFor(el)");
+            }
+            if features.has_dynamic_attrs || features.has_style_binding {
+                parts.push("bindAttrs(el)");
+            }
+            if features.has_class_binding {
+                parts.push("bindClassBindings(el)");
+            }
+            parts.join(";")
+        };
+        // `_si`: schedule every not-yet-scheduled island under `scope`. Called at
+        // load AND after SPA navigation (so islands on navigated pages hydrate).
+        // `_wcs` marks an island scheduled; on trigger it's marked ready, its
+        // subtree is bound, and the component's deferred on:mount runs once per
+        // island instance. `visible` observes the island's first *element* child
+        // (the `display:contents` wrapper has no box); with no element child it
+        // falls back to idle so the island still hydrates.
+        writeln!(js,
+            "const _si=(scope=document)=>scope.querySelectorAll('[data-webcore-island]').forEach(el=>{{if(el._wcs)return;el._wcs=1;const go=()=>{{el.setAttribute('data-webcore-ready','');{island_hydrate}{semi}const c=el.dataset.webcoreIslandComp;if(MB[c])MB[c]();}},idle=(window.requestIdleCallback||(cb=>setTimeout(cb,1)));const t=el.firstElementChild;if(el.dataset.webcoreIsland==='visible'&&t&&'IntersectionObserver'in window){{const io=new IntersectionObserver((es,o)=>{{es.some(e=>e.isIntersecting)&&(o.disconnect(),go());}});io.observe(t);}}else idle(go);}});",
+            semi = if island_hydrate.is_empty() { "" } else { ";" }
+        ).expect("write! to String is infallible");
+    }
+
     let init_route_params = if features.has_param_routes {
         "matchRoute(location.pathname);if(Object.keys(ROUTE_PARAMS).length)nav(location.pathname,true);"
     } else {
@@ -535,8 +608,12 @@ fn generate_runtime_js_with_vars_and_exprs(
     };
     let css_defer_swap =
         ";document.querySelectorAll('link[data-webcore-defer]').forEach(l=>l.media='all')";
-    write!(js, "document.addEventListener('DOMContentLoaded',()=>{{{init_route_params}{transition_css_inject}{all_rebinds}{refs_populate}{css_defer_swap}").expect("write! to String is infallible");
-    for body in &mount_bodies {
+    write!(js, "document.addEventListener('DOMContentLoaded',()=>{{{init_route_params}{transition_css_inject}{all_rebinds}{refs_populate}{css_defer_swap}{island_boot}").expect("write! to String is infallible");
+    for (name, body) in &mount_bodies {
+        // Deferred-mount island components run their mount at hydration (via MB).
+        if deferred_mount_comps.contains(name) {
+            continue;
+        }
         write!(js, ";(()=>{{\n{}\n}})()", body.trim()).expect("write! to String is infallible");
     }
     for comp in document.components.values() {
@@ -614,10 +691,9 @@ fn generate_runtime_js_with_vars_and_exprs(
         js.push_str(";window.addEventListener('beforeunload',runDestroyHooks)");
     }
     // Prod cleanup: strip the reactive `data-webcore-*` attributes for a tidy DOM.
-    // Skipped when the project uses i18n: `setLocale` re-renders by RE-QUERYING
-    // these attributes (`_b`/`bindIf`/`bindAttrs`/…), so stripping them would make
-    // a runtime language switch find no elements to update.
-    if prod && document.locales.is_empty() {
+    // Skipped when the project uses i18n (`setLocale` re-queries them) or islands
+    // (a not-yet-hydrated island still needs its markers to hydrate later).
+    if prod && document.locales.is_empty() && !features.has_islands {
         js.push_str(
             ";(['data-webcore-if','data-webcore-else','data-webcore-interpolation',\
 'data-webcore-ref','data-webcore-defer','data-webcore-spread']).forEach(a=>{\

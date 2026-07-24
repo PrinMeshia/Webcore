@@ -1,0 +1,62 @@
+component ErrorExplorer {
+    state { code: String = "WC1003" }
+    view {
+        div class="errx" {
+            div class="errx-codes" {
+                button class="errx-code" class:active={code == "WC1005"} on:click={code = "WC1005"} { "WC1005" }
+                button class="errx-code" class:active={code == "WC1003"} on:click={code = "WC1003"} { "WC1003" }
+                button class="errx-code" class:active={code == "WC1002"} on:click={code = "WC1002"} { "WC1002" }
+                button class="errx-code" class:active={code == "WC1010"} on:click={code = "WC1010"} { "WC1010" }
+                button class="errx-code" class:active={code == "WC1013"} on:click={code = "WC1013"} { "WC1013" }
+            }
+            div class="errx-detail" {
+                @if code == "WC1005" {
+                    div class="errx-src" { "component 9 { }" }
+                    pre class="code-block" data-lang="text" {
+"error[WC1005]: src/app.webc:1:11
+  |
+1 | component 9 { }
+  |           ^ expected identifier
+  = hint: a name (letters, digits, _), no quotes or spaces"
+                    }
+                } @else if code == "WC1003" {
+                    div class="errx-src" { "page home { }" }
+                    pre class="code-block" data-lang="text" {
+"error[WC1003]: src/pages/home.webc:1:6
+  |
+1 | page home { }
+  |      ^ expected string_literal
+  = hint: a quoted text value, e.g. \"my value\""
+                    }
+                } @else if code == "WC1002" {
+                    div class="errx-src" { "component X { view { div } " }
+                    pre class="code-block" data-lang="text" {
+"error[WC1002]: src/components/X.webc:1:27
+  |
+1 | component X { view { div }
+  |                           ^ expected element
+  = hint: missing closing brace? every { must be closed by }"
+                    }
+                } @else if code == "WC1010" {
+                    div class="errx-src" { "@keyframes 3d { }" }
+                    pre class="code-block" data-lang="text" {
+"error[WC1010]: src/components/X.webc:1:12
+  |
+1 | @keyframes 3d { }
+  |            ^ expected keyframes_name
+  = hint: invalid @keyframes name — start with a letter (e.g. spin-cw)"
+                    }
+                } @else {
+                    div class="errx-src" { "routes { \"/\": Home, \"/x\": X }" }
+                    pre class="code-block" data-lang="text" {
+"error[WC1013]: src/app.webc:1:20
+  |
+1 | routes { \"/\": Home, \"/x\": X }
+  |                    ^ expected string_literal
+  = hint: one route per line — \"/\": Home (no comma)"
+                    }
+                }
+            }
+        }
+    }
+}

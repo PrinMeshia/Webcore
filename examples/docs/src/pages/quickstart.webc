@@ -1,0 +1,109 @@
+page "quickstart" {
+    div class="page-header" {
+        span class="page-header-badge" { "▸ Getting Started" }
+        h1 { "Quick Start" }
+        p class="page-sub" {
+            "Build a small interactive component and see how markup, state, styles and reactivity live together in one file."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "1 · Create the project" }
+        pre class="code-block" data-lang="bash" {
+"webc new hello
+cd hello
+webc dev"
+        }
+        p {
+            "Open "
+            code { "http://localhost:3000" }
+            ". Any edit to a "
+            code { ".webc" }
+            " file hot-reloads the browser over a WebSocket."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "2 · Declare a component" }
+        p {
+            "A component bundles "
+            code { "state" }
+            " (reactive data), a "
+            code { "view" }
+            " (markup with interpolations "
+            code { "\{…}" }
+            " and events "
+            code { "on:click=\{…}" }
+            ") and scoped "
+            code { "style" }
+            "."
+        }
+        pre class="code-block" data-lang="webc" {
+"// src/components/Greeter.webc
+component Greeter {
+    state {
+        name: String = \"world\"
+        count: Number = 0
+    }
+    view {
+        div class=\"card\" {
+            h2 \"Hello, \{name}!\"
+            input bind:value=\{name} placeholder=\"your name\"
+            button on:click=\{count += 1} { \"Clicked \{count} times\" }
+        }
+    }
+    style {
+        .card { display: grid; gap: 0.75rem; max-width: 22rem; }
+        input, button { padding: 0.5rem 0.75rem; border-radius: 8px; }
+    }
+}"
+        }
+        div class="callout callout-tip" {
+            code { "bind:value" }
+            " is two-way binding — typing updates "
+            code { "name" }
+            ", which re-renders "
+            code { "\{name}" }
+            " automatically via fine-grained signals."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "3 · Use it on a page" }
+        pre class="code-block" data-lang="webc" {
+"// src/pages/home.webc
+page \"home\" {
+    h1 \"My first WebCore app\"
+    Greeter {}
+}"
+        }
+        p {
+            "Components are resolved at compile time. Import them explicitly with "
+            code { "import Greeter from \"../components/Greeter.webc\"" }
+            " when you want per-page tree-shaking."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "4 · Try it live" }
+        p { "The exact component below is compiled into this page — state, computed, @if and events, all vanilla JS:" }
+        LiveCounter {}
+    }
+
+    section class="doc-section" {
+        h2 { "5 · Ship it" }
+        pre class="code-block" data-lang="bash" {
+"webc build --prod
+# → dist/  (minified HTML/CSS/JS, hashed assets, SRI, sitemap)"
+        }
+        p {
+            "Deploy "
+            code { "dist/" }
+            " to any static host. See the "
+            a href="/cli" { "CLI reference" }
+            " for every flag, or the "
+            a href="/islands" { "Islands guide" }
+            " to defer heavy components."
+        }
+    }
+}

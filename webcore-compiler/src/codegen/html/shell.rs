@@ -42,6 +42,7 @@ pub(super) fn emit_html_shell(
     site_url: Option<&str>,
     canonical: Option<&str>,
     pwa: Option<&super::PwaHead>,
+    hreflang_alternates: &[(String, String)],
 ) -> String {
     let mut html = String::new();
     html.push_str("<!DOCTYPE html>\n");
@@ -68,6 +69,16 @@ pub(super) fn emit_html_shell(
             .expect("write! to String is infallible");
         writeln!(html, "  <meta property=\"og:url\" content=\"{esc}\">")
             .expect("write! to String is infallible");
+    }
+    // hreflang alternates (SSG i18n) — one per locale plus x-default.
+    for (hreflang, href) in hreflang_alternates {
+        writeln!(
+            html,
+            "  <link rel=\"alternate\" hreflang=\"{}\" href=\"{}\">",
+            html_escape(hreflang),
+            html_escape(href)
+        )
+        .expect("write! to String is infallible");
     }
     if let Some(h) = head {
         for (key, value) in &h.metas {

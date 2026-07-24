@@ -349,6 +349,24 @@ pub struct Attribute {
     pub span: Span,
 }
 
+/// Extract a `client="<strategy>"` partial-hydration directive (islands, #50)
+/// from a component instance's attributes. Returns the deferring strategies
+/// `"idle"` or `"visible"`; `"load"` (eager, the default) and unknown values
+/// yield `None` — an eager component needs no island marker.
+pub(crate) fn island_strategy(attributes: &[Attribute]) -> Option<&str> {
+    attributes.iter().find_map(|a| {
+        if a.name != "client" {
+            return None;
+        }
+        match &a.value {
+            AttributeValue::String(v) if matches!(v.as_str(), "idle" | "visible") => {
+                Some(v.as_str())
+            }
+            _ => None,
+        }
+    })
+}
+
 #[derive(Debug, Clone)]
 pub enum AttributeValue {
     String(String),

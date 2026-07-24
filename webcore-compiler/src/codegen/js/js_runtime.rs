@@ -36,11 +36,41 @@ pub(super) fn emit_state_class(has_refs: bool) -> String {
 pub(super) fn emit_bind_fns_v3(f: &RuntimeFeatures) -> String {
     let mut js = String::new();
 
+    // Islands (#50): when partial hydration is used, the reactive bind passes
+    // take an optional `root` so a single island subtree can be hydrated on its
+    // own, and each element loop skips nodes still inside a not-yet-hydrated
+    // island (`_ip(el)`). Non-island projects keep the original zero-arg,
+    // document-wide signatures so their runtime is byte-for-byte unchanged.
+    let sig = if f.has_islands {
+        "(root=document)"
+    } else {
+        "()"
+    };
+    let qroot = if f.has_islands { "root" } else { "document" };
+    let guard = if f.has_islands {
+        "if(_ip(el))return;"
+    } else {
+        ""
+    };
+    if f.has_islands {
+        // _ip: element's NEAREST island ancestor hasn't hydrated yet. Using the
+        // nearest island (not "any pending ancestor") lets a nested island
+        // hydrate independently of a still-pending outer island.
+        js.push_str(
+            "const _ip=el=>{const i=el.closest('[data-webcore-island]');return i&&!i.hasAttribute('data-webcore-ready');};\n",
+        );
+    }
+
     if f.has_if {
         if f.has_transition {
+            js.push_str("const bindIf=");
+            js.push_str(sig);
+            js.push_str("=>{\n");
+            js.push_str(qroot);
+            js.push_str(".querySelectorAll('[data-webcore-if]').forEach(el=>{");
+            js.push_str(guard);
             js.push_str(
-                "const bindIf=()=>{\n\
-                 document.querySelectorAll('[data-webcore-if]').forEach(el=>{\n\
+                "\n\
                    const id=el.dataset.webcoreIf,fn=_e[id],\n\
                          next=el.nextElementSibling,\n\
                          hasElse=next?.dataset.webcoreElse===id,\n\
@@ -69,9 +99,14 @@ pub(super) fn emit_bind_fns_v3(f: &RuntimeFeatures) -> String {
                  };\n"
             );
         } else {
+            js.push_str("const bindIf=");
+            js.push_str(sig);
+            js.push_str("=>{\n");
+            js.push_str(qroot);
+            js.push_str(".querySelectorAll('[data-webcore-if]').forEach(el=>{");
+            js.push_str(guard);
             js.push_str(
-                "const bindIf=()=>{\n\
-                 document.querySelectorAll('[data-webcore-if]').forEach(el=>{\n\
+                "\n\
                    const id=el.dataset.webcoreIf,fn=_e[id],\n\
                          next=el.nextElementSibling,\n\
                          hasElse=next?.dataset.webcoreElse===id,\n\
@@ -88,12 +123,21 @@ pub(super) fn emit_bind_fns_v3(f: &RuntimeFeatures) -> String {
     }
     // bindFor in v3 is unchanged — it uses S.get(itN) directly for iterables
     if f.has_for {
-        js.push_str("const bindFor=(root=document)=>{root.querySelectorAll('template[data-webcore-for]').forEach(tmpl=>{if(tmpl._wc_b)return;tmpl._wc_b=1;const iN=tmpl.dataset.webcoreFor,rawItN=tmpl.dataset.webcoreIn,keyExpr=tmpl.dataset.webcoreForKey,idxN=tmpl.dataset.webcoreForIndex,rangeStr=tmpl.dataset.webcoreForRange,pCtx=tmpl._wc_ctx??{},cont=tmpl.nextElementSibling,getItems=()=>{if(rangeStr){const[f,t]=rangeStr.split('..').map(Number);return Array.from({length:t-f},(_,i)=>String(f+i));}for(const[n,v]of Object.entries(pCtx)){if(rawItN===n)return Array.isArray(v)?v:[];if(rawItN.startsWith(n+'.')){const r=rawItN.slice(n.length+1).split('.').reduce((o,k)=>o?.[k],v);return Array.isArray(r)?r:[];}}const isStore=rawItN.startsWith('$store.'),itN=isStore?rawItN.slice(7):rawItN;return(isStore?STORE:S).get(itN)??[];},evalKey=keyExpr?(val=>keyExpr.split('.').reduce((o,k)=>o?.[k],{[iN]:val})):null,fillItem=(el,val,i)=>{el.querySelectorAll('[data-webcore-interpolation]').forEach(s=>{const ie=s.dataset.webcoreInterpolation;if(ie===iN){s.textContent=String(val??'');return;}if(idxN&&ie===idxN){s.textContent=String(i);return;}if(ie.startsWith(iN+'.')){s.textContent=String(ie.slice(iN.length+1).split('.').reduce((o,k)=>o?.[k],val)??'');return;}for(const[n,v]of Object.entries(pCtx)){if(ie===n){s.textContent=String(v??'');return;}if(ie.startsWith(n+'.')){s.textContent=String(ie.slice(n.length+1).split('.').reduce((o,k)=>o?.[k],v)??'');return;}}});el.dataset.webcoreIdx=String(i);if(val&&typeof val==='object')Object.entries(val).forEach(([k,v])=>{if(typeof v!=='object')el.dataset[k]=String(v)});},render=()=>{if(!tmpl.isConnected)return;const items=getItems();if(evalKey){const newKeys=items.map(evalKey);const existing=new Map([...cont.children].map(c=>[c.dataset.webcoreKey,c]));const keep=new Set(newKeys);[...existing.keys()].filter(k=>!keep.has(k)).forEach(k=>existing.get(k).remove());const frag=document.createDocumentFragment();newKeys.forEach((key,i)=>{if(existing.has(key)){const el=existing.get(key);fillItem(el,items[i],i);frag.appendChild(el);}else{const cl=tmpl.content.cloneNode(true);const fe=cl.firstElementChild;if(fe){fe.dataset.webcoreKey=key;fillItem(fe,items[i],i);}cl.querySelectorAll('template[data-webcore-for]').forEach(t=>{t._wc_ctx={...pCtx,[iN]:items[i]};});frag.append(...Array.from(cl.children));}});cont.replaceChildren(frag);}else{const frag=document.createDocumentFragment();items.forEach((val,i)=>{const cl=tmpl.content.cloneNode(true);const firstEl=cl.firstElementChild;if(firstEl)fillItem(firstEl,val,i);cl.querySelectorAll('template[data-webcore-for]').forEach(t=>{t._wc_ctx={...pCtx,[iN]:val};});frag.appendChild(cl);});cont.replaceChildren(frag);}bindFor(cont);};$effect(render);});};\n");
+        js.push_str("const bindFor=(root=document)=>{root.querySelectorAll('template[data-webcore-for]').forEach(tmpl=>{");
+        if f.has_islands {
+            js.push_str("if(_ip(tmpl))return;");
+        }
+        js.push_str("if(tmpl._wc_b)return;tmpl._wc_b=1;const iN=tmpl.dataset.webcoreFor,rawItN=tmpl.dataset.webcoreIn,keyExpr=tmpl.dataset.webcoreForKey,idxN=tmpl.dataset.webcoreForIndex,rangeStr=tmpl.dataset.webcoreForRange,pCtx=tmpl._wc_ctx??{},cont=tmpl.nextElementSibling,getItems=()=>{if(rangeStr){const[f,t]=rangeStr.split('..').map(Number);return Array.from({length:t-f},(_,i)=>String(f+i));}for(const[n,v]of Object.entries(pCtx)){if(rawItN===n)return Array.isArray(v)?v:[];if(rawItN.startsWith(n+'.')){const r=rawItN.slice(n.length+1).split('.').reduce((o,k)=>o?.[k],v);return Array.isArray(r)?r:[];}}const isStore=rawItN.startsWith('$store.'),itN=isStore?rawItN.slice(7):rawItN;return(isStore?STORE:S).get(itN)??[];},evalKey=keyExpr?(val=>keyExpr.split('.').reduce((o,k)=>o?.[k],{[iN]:val})):null,fillItem=(el,val,i)=>{el.querySelectorAll('[data-webcore-interpolation]').forEach(s=>{const ie=s.dataset.webcoreInterpolation;if(ie===iN){s.textContent=String(val??'');return;}if(idxN&&ie===idxN){s.textContent=String(i);return;}if(ie.startsWith(iN+'.')){s.textContent=String(ie.slice(iN.length+1).split('.').reduce((o,k)=>o?.[k],val)??'');return;}for(const[n,v]of Object.entries(pCtx)){if(ie===n){s.textContent=String(v??'');return;}if(ie.startsWith(n+'.')){s.textContent=String(ie.slice(n.length+1).split('.').reduce((o,k)=>o?.[k],v)??'');return;}}});el.dataset.webcoreIdx=String(i);if(val&&typeof val==='object')Object.entries(val).forEach(([k,v])=>{if(typeof v!=='object')el.dataset[k]=String(v)});},render=()=>{if(!tmpl.isConnected)return;const items=getItems();if(evalKey){const newKeys=items.map(evalKey);const existing=new Map([...cont.children].map(c=>[c.dataset.webcoreKey,c]));const keep=new Set(newKeys);[...existing.keys()].filter(k=>!keep.has(k)).forEach(k=>existing.get(k).remove());const frag=document.createDocumentFragment();newKeys.forEach((key,i)=>{if(existing.has(key)){const el=existing.get(key);fillItem(el,items[i],i);frag.appendChild(el);}else{const cl=tmpl.content.cloneNode(true);const fe=cl.firstElementChild;if(fe){fe.dataset.webcoreKey=key;fillItem(fe,items[i],i);}cl.querySelectorAll('template[data-webcore-for]').forEach(t=>{t._wc_ctx={...pCtx,[iN]:items[i]};});frag.append(...Array.from(cl.children));}});cont.replaceChildren(frag);}else{const frag=document.createDocumentFragment();items.forEach((val,i)=>{const cl=tmpl.content.cloneNode(true);const firstEl=cl.firstElementChild;if(firstEl)fillItem(firstEl,val,i);cl.querySelectorAll('template[data-webcore-for]').forEach(t=>{t._wc_ctx={...pCtx,[iN]:val};});frag.appendChild(cl);});cont.replaceChildren(frag);}bindFor(cont);};$effect(render);});};\n");
     }
     if f.has_dynamic_attrs {
+        js.push_str("const bindAttrs=");
+        js.push_str(sig);
+        js.push_str("=>{\n");
+        js.push_str(qroot);
+        js.push_str(".querySelectorAll('[data-webcore-bound]').forEach(el=>{");
+        js.push_str(guard);
         js.push_str(
-            "const bindAttrs=()=>{\n\
-             document.querySelectorAll('[data-webcore-bound]').forEach(el=>{\n\
+            "\n\
                [...el.attributes]\n\
                  .filter(a=>a.name.startsWith('data-webcore-attr-'))\n\
                  .forEach(a=>{\n\
@@ -113,9 +157,14 @@ pub(super) fn emit_bind_fns_v3(f: &RuntimeFeatures) -> String {
         }
         js.push_str("  })\n  };\n");
     } else if f.has_style_binding {
+        js.push_str("const bindAttrs=");
+        js.push_str(sig);
+        js.push_str("=>{");
+        js.push_str(qroot);
+        js.push_str(".querySelectorAll('[data-webcore-bound]').forEach(el=>{");
+        js.push_str(guard);
         js.push_str(
-            "const bindAttrs=()=>{\
-document.querySelectorAll('[data-webcore-bound]').forEach(el=>{\
+            "\
 for(const a of Array.from(el.attributes)){\
 if(a.name.startsWith('data-webcore-style-')){\
 const p=a.name.slice('data-webcore-style-'.length);\
@@ -129,9 +178,14 @@ $effect(styleUpd);\
         );
     }
     if f.has_class_binding {
+        js.push_str("const bindClassBindings=");
+        js.push_str(sig);
+        js.push_str("=>{\n");
+        js.push_str(qroot);
+        js.push_str(".querySelectorAll('[data-webcore-class-bound]').forEach(el=>{");
+        js.push_str(guard);
         js.push_str(
-            "const bindClassBindings=()=>{\n\
-             document.querySelectorAll('[data-webcore-class-bound]').forEach(el=>{\n\
+            "\n\
                for(const attr of Array.from(el.attributes)){\n\
                  if(attr.name.startsWith('data-webcore-class-')&&attr.name!=='data-webcore-class-bound'){\n\
                    const cls=attr.name.slice(19),id=attr.value,fn=_e[id],\n\

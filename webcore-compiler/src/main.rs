@@ -23,6 +23,7 @@ mod cli;
 pub(crate) mod codegen {
     pub(crate) mod attr_names;
     pub(crate) mod css;
+    pub(crate) mod css_sourcemap;
     pub(crate) mod html;
     pub(crate) mod js;
 }

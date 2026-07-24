@@ -1,6 +1,6 @@
 page "examples" {
     div class="page-header" {
-        div class="page-header-badge" { "6 projects • open source" }
+        div class="page-header-badge" { "▸ WebCore 4.0 patterns" }
         h1 { "Examples" }
         p class="page-sub" {
             "Complete projects built with WebCore — each compiles to a standalone "
@@ -10,6 +10,57 @@ page "examples" {
     }
 
     div class="examples-grid" {
+        div class="example-card example-card-featured" {
+            div class="example-card-top" {
+                span class="example-emoji" { "🏝️" }
+                div class="example-card-meta" {
+                    code class="example-tag" { "islands" }
+                    div class="example-chips" {
+                        span class="chip chip-accent" { "client=" }
+                        span class="chip" { "SSG" }
+                        span class="chip chip-secondary" { "4.0" }
+                    }
+                }
+            }
+            h3 { "Partial hydration" }
+            p {
+                "Render heavy components statically and hydrate them on idle or on scroll — first paint stays instant."
+            }
+            pre class="code-block" {
+"HeavyChart client=\"visible\" {}
+Newsletter client=\"idle\" {}"
+            }
+        }
+
+        div class="example-card example-card-featured" {
+            div class="example-card-top" {
+                span class="example-emoji" { "🌍" }
+                div class="example-card-meta" {
+                    code class="example-tag" { "i18n-static" }
+                    div class="example-chips" {
+                        span class="chip chip-accent" { "hreflang" }
+                        span class="chip" { "per-locale" }
+                        span class="chip chip-secondary" { "4.0" }
+                    }
+                }
+            }
+            h3 { "Static i18n site" }
+            p {
+                "One static page per locale ("
+                code { "/en/…" }
+                ") with correct "
+                code { "lang" }
+                " and "
+                code { "hreflang" }
+                " — great SEO in every language."
+            }
+            pre class="code-block" {
+"# webc.toml
+[i18n]
+static = true"
+            }
+        }
+
         div class="example-card" {
             div class="example-card-top" {
                 span class="example-emoji" { "🔢" }

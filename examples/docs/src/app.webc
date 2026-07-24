@@ -7,9 +7,16 @@ app WebCoreDocs {
     }
     routes {
         "/": HomePage
+        "/docs": DocsPage
+        "/install": InstallPage
+        "/quickstart": QuickstartPage
+        "/islands": IslandsPage
+        "/i18n": I18nPage
         "/syntax": SyntaxPage
+        "/cli": CliPage
         "/components": ComponentsPage
         "/features": FeaturesPage
         "/examples": ExamplesPage
+        "/playground": PlaygroundPage
     }
 }

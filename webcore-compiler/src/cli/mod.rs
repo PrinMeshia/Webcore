@@ -1,5 +1,6 @@
 //! CLI argument parsing and command dispatch.
 
+pub(crate) mod a11y;
 pub(crate) mod assets;
 pub(crate) mod build;
 pub(crate) mod check;
@@ -83,7 +84,10 @@ pub(crate) fn run() {
         }
         "check" => {
             let json = args.iter().skip(2).any(|a| a == "--json");
-            match check::check_project(json) {
+            // `--a11y` runs accessibility lints; `--strict` makes them fail the check.
+            let a11y = args.iter().skip(2).any(|a| a == "--a11y");
+            let strict = args.iter().skip(2).any(|a| a == "--strict");
+            match check::check_project(json, a11y, strict) {
                 Ok(()) => {}
                 Err(e) => {
                     // In JSON mode the report (including failures) is already
@@ -158,7 +162,9 @@ fn print_help() {
     println!("  new <nom>    Créer un nouveau projet WebCore");
     println!("  build        Compiler le projet (dist/) — --prod / --dev force le mode");
     println!("  check        Valider le projet sans générer de fichiers");
-    println!("               --json : diagnostics structurés sur stdout (éditeurs/outils)");
+    println!("               --json   : diagnostics structurés sur stdout (éditeurs/outils)");
+    println!("               --a11y   : lints d'accessibilité (RGAA/WCAG)");
+    println!("               --strict : fait échouer la commande sur les avertissements a11y");
     println!("  watch        Rebuilder à chaque modification (sans serveur)");
     println!("  dev [port]   Démarrer le serveur de développement (défaut : 3000)");
     println!("  fmt [paths]  Formater les fichiers .webc (défaut : src/)");

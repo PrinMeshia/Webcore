@@ -86,35 +86,6 @@ pub(super) fn safe_id_prefix(name: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod prefix_tests {
-    use super::safe_id_prefix;
-
-    #[test]
-    fn strips_non_alphanumeric_and_lowercases() {
-        assert_eq!(safe_id_prefix("HomePage"), "homepage");
-        assert_eq!(safe_id_prefix("my page!"), "mypage");
-    }
-
-    #[test]
-    fn empty_falls_back_to_p() {
-        assert_eq!(safe_id_prefix(""), "p");
-        assert_eq!(safe_id_prefix("---"), "p");
-    }
-
-    #[test]
-    fn digit_leading_names_are_valid_js_identifiers() {
-        // "404" as an unquoted object key (404e0:) is a JS syntax error.
-        assert_eq!(safe_id_prefix("404"), "p404");
-        assert_eq!(safe_id_prefix("2fa"), "p2fa");
-        assert!(!safe_id_prefix("404")
-            .chars()
-            .next()
-            .unwrap()
-            .is_ascii_digit());
-    }
-}
-
 /// Extract path from `webcore_navigate(path)` expression
 pub(super) fn extract_navigate_path(expr: &str) -> Option<String> {
     // Match webcore_navigate(/path) or webcore_navigate(root) or webcore_navigate("/path")
@@ -143,4 +114,33 @@ pub(super) fn extract_navigate_path(expr: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::safe_id_prefix;
+
+    #[test]
+    fn strips_non_alphanumeric_and_lowercases() {
+        assert_eq!(safe_id_prefix("HomePage"), "homepage");
+        assert_eq!(safe_id_prefix("my page!"), "mypage");
+    }
+
+    #[test]
+    fn empty_falls_back_to_p() {
+        assert_eq!(safe_id_prefix(""), "p");
+        assert_eq!(safe_id_prefix("---"), "p");
+    }
+
+    #[test]
+    fn digit_leading_names_are_valid_js_identifiers() {
+        // "404" as an unquoted object key (404e0:) is a JS syntax error.
+        assert_eq!(safe_id_prefix("404"), "p404");
+        assert_eq!(safe_id_prefix("2fa"), "p2fa");
+        assert!(!safe_id_prefix("404")
+            .chars()
+            .next()
+            .unwrap()
+            .is_ascii_digit());
+    }
 }

@@ -3,8 +3,8 @@ layout DocsLayout {
         DocsShell {}
         div class="announcement-bar" {
             span class="announcement-text" {
-                strong { "WebCore v3.3 " }
-                " — shared cached runtime (one webcore.js for the whole site), LSP code actions, semantic tokens, real-time diagnostics"
+                strong { "WebCore 4.0 " }
+                " — partial hydration (islands), per-locale SSG + hreflang, accessibility lints, stable error codes & CSS source maps"
             }
             a href="https://github.com/PrinMeshia/Webcore/blob/main/CHANGELOG.md" class="announcement-link" { "Changelog →" }
             button class="announcement-close" aria-label="Close" { "×" }
@@ -15,13 +15,14 @@ layout DocsLayout {
                 link to="/" class="logo" {
                     span class="logo-mark" { "▸" }
                     span class="logo-text" { "WebCore" }
-                    span class="logo-version" { "v3.3" }
+                    span class="logo-version" { "v4.0" }
                 }
                 nav class="site-nav" {
-                    link to="/" { "Home" }
-                    link to="/syntax" { "Syntax" }
-                    link to="/components" { "Components" }
-                    link to="/features" { "Features" }
+                    link to="/docs" { "Docs" }
+                    link to="/islands" { "Guides" }
+                    link to="/syntax" { "Reference" }
+                    link to="/features" { "What's new" }
+                    link to="/playground" { "Playground" }
                     link to="/examples" { "Examples" }
                 }
                 button class="nav-mobile-toggle" aria-label="Open menu" { "☰" }
@@ -37,7 +38,7 @@ layout DocsLayout {
             p {
                 "Built with "
                 strong { "WebCore" }
-                " v3.3 · "
+                " v4.0 · "
                 a href="https://github.com/PrinMeshia/Webcore" { "GitHub" }
                 " · "
                 a href="https://github.com/PrinMeshia/Webcore/releases" { "Releases" }

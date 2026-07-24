@@ -7,7 +7,7 @@
 const BASE64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Encode a signed integer as Base64-VLQ (LSB first, continuation bit in bit 5).
-fn encode_vlq(n: i32) -> String {
+pub(crate) fn encode_vlq(n: i32) -> String {
     // Sign bit is the LSB in VLQ: positive n → n<<1, negative n → (-n<<1)|1
     let mut vlq = if n < 0 { ((-n) << 1) | 1 } else { n << 1 };
     let mut result = String::new();

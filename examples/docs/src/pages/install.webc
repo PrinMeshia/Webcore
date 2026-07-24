@@ -1,0 +1,79 @@
+page "install" {
+    div class="page-header" {
+        span class="page-header-badge" { "▸ Getting Started" }
+        h1 { "Installation" }
+        p class="page-sub" {
+            "WebCore ships as a single Rust binary. Build it once, then use "
+            code { "webc" }
+            " to scaffold, develop and compile projects."
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Requirements" }
+        ul {
+            li { "A recent " code { "stable" } " Rust toolchain (" code { "rustup" } ")." }
+            li { "Node.js is " strong { "not" } " required — the runtime is generated, not bundled." }
+            li { "Optional: " code { "wasm-pack" } " if a project ships a Rust/WASM module." }
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Build the compiler" }
+        p { "Clone the repository and build the release binary." }
+        pre class="code-block" data-lang="bash" {
+"git clone https://github.com/PrinMeshia/Webcore.git
+cd Webcore/webcore-compiler
+cargo build --release
+# → ./target/release/webcore-compiler"
+        }
+        div class="callout" {
+            "Add the binary to your "
+            code { "PATH" }
+            " as "
+            code { "webc" }
+            " for convenience:"
+            pre class="inline-code" { "alias webc=\"$(pwd)/target/release/webcore-compiler\"" }
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Scaffold a project" }
+        p {
+            code { "webc new" }
+            " creates a ready-to-run project: an "
+            code { "app" }
+            " block, a layout, a home page and a "
+            code { "Counter" }
+            " component, plus a "
+            code { "theme.toml" }
+            " and a WASM scaffold."
+        }
+        pre class="code-block" data-lang="bash" {
+"webc new my-app
+cd my-app
+webc dev        # dev server with hot reload → http://localhost:3000"
+        }
+    }
+
+    section class="doc-section" {
+        h2 { "Project layout" }
+        pre class="code-block" data-lang="text" {
+"my-app/
+├─ webc.toml            # app config (title, lang, mode, url, [i18n], [pwa])
+├─ theme.toml           # design tokens → CSS variables
+├─ locales/*.toml       # translation catalogs (optional)
+├─ public/              # static assets, extra .css
+└─ src/
+   ├─ app.webc          # routes + <head>
+   ├─ layouts/          # page shells (slots)
+   ├─ pages/            # one file per route
+   └─ components/       # reusable components"
+        }
+        div class="callout callout-tip" {
+            strong { "Next: " }
+            a href="/quickstart" { "Quick Start" }
+            " builds a small interactive component from scratch."
+        }
+    }
+}

@@ -1,6 +1,6 @@
 # Spécification du langage WebCore
 
-> Version : 3.3.0 — Référence complète de la syntaxe `.webc`
+> Version : 4.0.0 — Référence complète de la syntaxe `.webc`
 
 ---
 
@@ -1505,6 +1505,26 @@ Le bon branchement est affiché dès le premier paint, sans attendre JavaScript 
 <div data-webcore-else="count &gt; 0" style="display:block">...</div>
 ```
 
+### Attributs interpolés pré-rendus
+
+Un attribut dynamique dont l'expression est statiquement connue est émis avec sa
+valeur résolue, à côté de la liaison `data-webcore-attr-*` utilisée au runtime.
+L'attribut est ainsi présent sans JavaScript (moteurs de recherche, lecteurs
+d'écran, premier paint) :
+
+```html
+<!-- Source .webc -->
+a href="/cv.pdf" aria-label={t("nav_cv")} { "CV" }
+
+<!-- HTML généré avec SSG (locale par défaut) -->
+<a href="/cv.pdf" aria-label="Télécharger le CV (PDF)"
+   data-webcore-attr-aria-label="homee0">CV</a>
+```
+
+Le runtime continue de mettre à jour la valeur de façon réactive (changement de
+langue, état). Sans contexte SSG ou pour une expression non résoluble, seule la
+liaison runtime est émise.
+
 ### Compatibilité runtime
 
 Le runtime JS (`bindIf`, `bind`) continue à opérer normalement après `DOMContentLoaded`.  
@@ -1521,6 +1541,95 @@ Il met à jour `el.style.display` et `el.textContent` de manière réactive.
 | Condition `>`, `<`, `>=`, `<=`, `==`, `!=` | `@if count > 0` | `display:block/none` |
 
 Les expressions complexes (appels de fonction, ternaires, etc.) sont laissées vides — le runtime les résout au chargement.
+
+### Pages statiques par locale (`[i18n] static`)
+
+Par défaut, le SSG ne pré-rend que la **locale par défaut** ; les autres langues
+ne s'affichent qu'après hydratation via `setLocale()`. En activant l'option :
+
+```toml
+[i18n]
+static = true
+```
+
+`webc build` génère **une page statique par locale** :
+
+| Locale | URL | `<html lang>` |
+|---|---|---|
+| défaut (`app.locale`) | `/`, `/about/` | `app.lang` |
+| autres (`locales/*.toml`) | `/{locale}/`, `/{locale}/about/` | code de la locale |
+
+Chaque page :
+
+- pré-rend son contenu (`t(...)`, interpolations de texte **et** d'attributs) dans
+  sa langue ;
+- porte le bon attribut `lang` sur `<html>` ;
+- émet des liens `hreflang` vers toutes les versions de langue plus `x-default` :
+
+```html
+<!-- dist/en/index.html -->
+<html lang="en">
+<link rel="canonical" href="https://example.com/en/">
+<link rel="alternate" hreflang="fr" href="https://example.com/">
+<link rel="alternate" hreflang="en" href="https://example.com/en/">
+<link rel="alternate" hreflang="x-default" href="https://example.com/">
+```
+
+Le `sitemap.xml` liste chaque URL localisée. Le runtime initialise sa locale
+depuis `<html lang>` : une page `/en/` reste en anglais à l'hydratation (pas de
+flash de langue). Les `href` `hreflang` sont absolus quand `app.url` est défini,
+sinon relatifs à la racine.
+
+> Les collections dynamiques (`"/post/:slug": PostPage each posts`) sont pour
+> l'instant rendues uniquement dans la locale par défaut.
+
+---
+
+## Hydratation partielle (islands)
+
+Par défaut, toute la réactivité d'une page est câblée au `DOMContentLoaded`. La
+directive `client` sur une **instance de composant** diffère l'hydratation d'un
+composant précis (modèle « islands ») :
+
+```webc
+page "home" {
+    h1 "Contenu statique"
+    HeavyChart client="visible" {}   // hydraté au défilement à l'écran
+    Newsletter  client="idle" {}     // hydraté quand le navigateur est inoccupé
+}
+```
+
+| Stratégie | Déclencheur |
+|---|---|
+| `client="load"` (défaut) | immédiat, au chargement |
+| `client="idle"` | `requestIdleCallback` (fallback `setTimeout`) |
+| `client="visible"` | `IntersectionObserver` (entrée dans le viewport) |
+
+Le composant est **rendu statiquement** (SSG) et enveloppé dans un marqueur
+`<div data-webcore-island="…" style="display:contents">`. Tant que l'île n'est
+pas hydratée :
+
+- ses liaisons réactives (`bind`, `bindAttrs`, `bindIf`, `bindFor`, classes) et
+  son `on:mount` **ne s'exécutent pas** ;
+- le HTML pré-rendu reste affiché (aucun contenu ne disparaît) ;
+- les gestionnaires d'événements, délégués au niveau du `document`, restent
+  actifs (l'état se met à jour, l'affichage se synchronise à l'hydratation).
+
+Au déclenchement, l'île est marquée `data-webcore-ready`, son sous-arbre est
+hydraté, et le `on:mount` du composant s'exécute une fois.
+
+La machinerie d'îles est **tree-shakée** : un projet sans directive `client`
+produit exactement le même runtime qu'avant. Idéal pour les composants lourds
+sous la ligne de flottaison (canvas, WebGL, longues listes).
+
+> Les gestionnaires étant délégués, un clic sur une île pas encore hydratée met
+> déjà à jour l'état ; l'affichage se met à jour dès l'hydratation.
+
+Les îles sont aussi (re)planifiées après une navigation SPA, donc une île sur
+une page atteinte par `nav` s'hydrate correctement. Un composant utilisé **à la
+fois** en île et de façon classique conserve son `on:mount` au chargement (le
+runtime est partagé pour tout le site) ; seuls les composants utilisés
+exclusivement en île voient leur `on:mount` différé.
 
 ---
 
@@ -2630,6 +2739,17 @@ component Spinner {
 
 Les `@keyframes` sont émis **globaux** (non scopés) car ils sont référencés par nom depuis `animation:`. Les règles CSS normales restent scopées via `data-v`.
 
+Le nom d'un `@keyframes` accepte les tirets (`@keyframes spin-cw`), comme le CSS.
+Une liste de sélecteurs séparés par des virgules peut s'étendre sur **plusieurs
+lignes** — chaque partie est scopée indépendamment :
+
+```webc
+style {
+    .btn:hover,
+    .btn.active { color: var(--accent); }
+}
+```
+
 ---
 
 ### `<script defer>` et `<link rel="preload">`
@@ -2966,7 +3086,7 @@ Depuis v2.5.2, les erreurs de compilation affichent un format structuré avec co
 **Format d'erreur :**
 
 ```
-error[parse]: src/pages/home.webc:3:17
+error[WC1001]: src/pages/home.webc:3:17
   |
 3 |     div class={  }
   |                 ^
@@ -2975,12 +3095,16 @@ error[parse]: src/pages/home.webc:3:17
 ```
 
 Chaque erreur de parse comporte :
-- Un en-tête `error[parse]: fichier:ligne:col` (rouge gras si le terminal le supporte)
+- Un en-tête `error[<code>]: fichier:ligne:col` (rouge gras si le terminal le supporte).
+  Le `<code>` est un **code stable `WCxxxx`** quand la cause est reconnue
+  (ex. `WC1003` = chaîne attendue, `WC1010` = nom d'@keyframes invalide), sinon
+  `parse`. Ce code est aussi présent dans la sortie `webc check --json`.
 - Le numéro de ligne avec le gutter `|` (cyan)
 - La ligne source fautive
 - Un caret `^` positionné sous la colonne exacte (rouge)
 - La clause `expected` extraite du message Pest
-- Un `= hint:` contextuel si applicable
+- Un `= hint:` contextuel si applicable (interpolation vide, `@keyframes` avec
+  tiret, type d'état manquant, attribut sans valeur, routes…)
 
 Le fichier source est propagé depuis tous les points de chargement (`app.webc`, `layouts/`, `components/`, `pages/`) — chaque erreur indique son fichier exact.
 
@@ -3412,7 +3536,20 @@ Chaque fermeture d'expression compilée (`e0`, `e1`, …) dans le bloc `const _e
 mappée à sa ligne d'origine dans le fichier `.webc`. Le bloc est émis une closure par
 ligne (au lieu d'une ligne unique) pour permettre les correspondances de ligne précises.
 
-En prod (`prod: true`), les source maps sont désactivées. 191 tests.
+En prod (`prod: true`), les source maps sont désactivées.
+
+### Source maps CSS (#54)
+
+En mode dev, `webc build` émet aussi une source map pour la feuille de styles :
+
+- Un commentaire `/*# sourceMappingURL=theme.css.map */` à la fin de `theme.css`.
+- Un fichier `dist/assets/theme.css.map` (source map v3 **multi-sources** : une
+  entrée `sources`/`sourcesContent` par `.webc` de composant contributeur).
+
+Chaque règle scopée est mappée à la ligne de la règle d'origine dans son `.webc`.
+Le CSS dev est servi **tel que généré** (mais toujours validé par LightningCSS)
+afin que le mapping par ligne reste exact ; en prod le CSS est minifié et aucune
+source map n'est émise.
 
 ---
 

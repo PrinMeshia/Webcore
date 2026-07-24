@@ -17,6 +17,10 @@ pub const SCOPE: &str = "data-v";
 pub const DEFER: &str = "data-webcore-defer";
 /// Spread operator: all properties of the expression are applied as attributes
 pub const SPREAD: &str = "data-webcore-spread";
+/// Island (partial hydration, #50): strategy = "idle" | "visible"
+pub const ISLAND: &str = "data-webcore-island";
+/// Island (#50): component name, so the runtime can defer its `on:mount`
+pub const ISLAND_COMPONENT: &str = "data-webcore-island-comp";
 // CSS class prefix constants (used in bindAttrs)
 pub const CLASS_PREFIX: &str = "data-webcore-class-";
 pub const CLASS_BOUND: &str = "data-webcore-class-bound";

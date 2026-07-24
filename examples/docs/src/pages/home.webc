@@ -1,6 +1,6 @@
 page "home" {
     div class="hero" {
-        div class="hero-badge" { "v3.2 — Preview" }
+        div class="hero-badge" { "▸ WebCore 4.0 — now shipping" }
         h1 class="hero-title" {
             "Build web interfaces"
             span class="hero-accent" { " declaratively" }
@@ -12,7 +12,7 @@ page "home" {
             " One language, one compiler, zero dependencies."
         }
         div class="hero-actions" {
-            link to="/syntax" class="btn-hero-primary" { "Read the Docs" }
+            link to="/docs" class="btn-hero-primary" { "Read the Docs" }
             link to="/examples" class="btn-hero-secondary" { "See Examples" }
         }
         div class="hero-snippet" {
@@ -44,12 +44,12 @@ component App {
             span class="stat-desc" { "PEG compiler" }
         }
         div class="stat-item" {
-            span class="stat-num" { "217" }
+            span class="stat-num" { "256" }
             span class="stat-desc" { "tests" }
         }
         div class="stat-item" {
-            span class="stat-num" { "0" }
-            span class="stat-desc" { "unsafe-eval" }
+            span class="stat-num" { "islands" }
+            span class="stat-desc" { "partial hydration" }
         }
         div class="stat-item" {
             span class="stat-num" { "~1 KB" }
@@ -60,199 +60,197 @@ component App {
             span class="stat-desc" { "dependencies" }
         }
         div class="stat-item" {
-            span class="stat-num" { "SSG" }
-            span class="stat-desc" { "pre-rendered" }
+            span class="stat-num" { "i18n" }
+            span class="stat-desc" { "static per locale" }
         }
     }
 
-    section class="section" {
-        h2 class="section-title" { "v3.2 — Core Advances" }
-        p class="section-sub" {
-            "Architectural shifts that make WebCore sites structurally smaller, faster and safer."
+    section class="band reveal" {
+        p class="band-eyebrow" { "What's new" }
+        h2 class="band-title" { "WebCore 4.0 in four moves" }
+        p class="band-sub" {
+            "Ship less JavaScript, rank in every language, catch mistakes earlier, and isolate every component — with zero new dependencies."
         }
-        div class="v3-cards" {
-            div class="v3-card v3-card-primary" {
-                div class="v3-card-icon" { "📦" }
-                h3 { "Shared, cached runtime" }
+        div class="pillars" {
+            div class="pillar" {
+                span class="pillar-badge" { "#50" }
+                div class="pillar-icon" { "🏝️" }
+                h3 { "Partial hydration" }
                 p {
-                    "Every page references a single "
-                    code { "/assets/webcore.[hash].js" }
-                    ", built from the union of all pages' expressions and handlers."
-                    " The browser downloads and caches the runtime "
-                    strong { "once" }
-                    " for the whole site — no more per-page inlining."
-                }
-                pre class="v3-diff" {
-"// before — full runtime inlined in every page (~8 KB × N)
-home.html     <script>/* runtime */</script>
-about.html    <script>/* runtime */</script>
-
-// after — one cached file for the whole site
-<script defer src=\"/assets/webcore.6e1f.js\"></script>"
-                }
-            }
-            div class="v3-card" {
-                div class="v3-card-icon" { "🔒" }
-                h3 { "CSP-safe by construction" }
-                p {
-                    "Expressions are compiled to JS closures at build time — "
-                    code { "new Function()" }
+                    "Tag a component "
+                    code { "client=\"idle\"" }
                     " / "
-                    code { "eval()" }
-                    " are structurally absent. A strict "
-                    code { "script-src 'self'" }
-                    " CSP works with no "
-                    code { "unsafe-eval" }
-                    " exception."
+                    code { "client=\"visible\"" }
+                    " — it renders statically and hydrates on idle or scroll."
                 }
-                pre class="v3-diff" {
-"// v2 — expression stored as string, eval'd at runtime
-<div data-webcore-if=\"count > 0\">
+                a href="/islands" { "Guide →" }
+            }
+            div class="pillar" {
+                span class="pillar-badge" { "#45 · #46" }
+                div class="pillar-icon" { "🌍" }
+                h3 { "SSG i18n + hreflang" }
+                p { "One static page per locale, correct lang, pre-rendered translations and alternates." }
+                a href="/i18n" { "Guide →" }
+            }
+            div class="pillar" {
+                span class="pillar-badge" { "#47–#54" }
+                div class="pillar-icon" { "🛠️" }
+                h3 { "Sharper DX" }
+                p { "a11y lints, stable error codes, CSS source maps, friendlier grammar." }
+                a href="/features" { "What's new →" }
+            }
+            div class="pillar" {
+                span class="pillar-badge" { "#42 · #43" }
+                div class="pillar-icon" { "🎯" }
+                h3 { "Component-scoped" }
+                p { "Reactive state and CSS are isolated per component — no collisions." }
+                a href="/syntax" { "Reference →" }
+            }
+        }
+    }
 
-// v3 — closure compiled at build time
-<div data-webcore-if=\"e0\">"
+    section class="band band-tint reveal" {
+        p class="band-eyebrow" { "Ship less JavaScript" }
+        h2 class="band-title" { "Hydrate only what's interactive" }
+        p class="band-sub" {
+            "Static content stays static. Heavy widgets below the fold hydrate on their own schedule — first paint is never blocked."
+        }
+        div class="compare" {
+            div class="compare-col" {
+                div class="compare-head" { "Before — hydrate everything" }
+                pre {
+"page \"home\" {
+    Hero {}
+    HeavyChart {}     // parses + runs now
+    Newsletter {}     // parses + runs now
+}
+// → all JS on the critical path"
                 }
             }
-            div class="v3-card" {
-                div class="v3-card-icon" { "🧩" }
-                h3 { "Build-time imports" }
-                p {
-                    "Components live in separate files and are resolved at compile time — like a C "
-                    code { "#include" }
-                    ". Each page receives only the components it imports."
-                }
-                pre class="v3-diff" {
-"import Button  from \"./Button.webc\"
-import Counter from \"./Counter.webc\"
-
-page \"home\" {
-    Counter {}
-}"
+            div class="compare-vs" { "vs" }
+            div class="compare-col after" {
+                div class="compare-head" { "WebCore 4.0 — islands" }
+                pre {
+"page \"home\" {
+    Hero {}
+    HeavyChart client=\"visible\" {}
+    Newsletter client=\"idle\" {}
+}
+// → static now, hydrate on demand"
                 }
             }
         }
     }
 
-    section class="section" {
-        h2 class="section-title" { "Why WebCore?" }
-        p class="section-sub" {
-            "One declarative syntax that replaces HTML templates, CSS modules, and JS reactivity boilerplate."
+    section class="band reveal" {
+        p class="band-eyebrow" { "Live · #50" }
+        h2 class="band-title" { "Watch an island hydrate" }
+        p class="band-sub" {
+            "The component below is compiled with "
+            code { "client=\"visible\"" }
+            ". It stays inert until it scrolls into view — then its "
+            code { "on:mount" }
+            " runs and it becomes interactive. Watch the badge flip."
+        }
+        div class="island-spacer" { "↓ this island is lazy — its status is still \"static\" ↓" }
+        div class="demo-panel" {
+            div class="demo-panel-head" {
+                span class="dot off" {}
+                span class="demo-panel-title" { "IslandDemo · client=\"visible\"" }
+            }
+            div class="demo-panel-body" {
+                IslandDemo client="visible" {}
+            }
+        }
+    }
+
+    section class="band band-tint reveal" {
+        p class="band-eyebrow" { "Live · #46" }
+        h2 class="band-title" { "One site, every language" }
+        p class="band-sub" {
+            "Switch locale live below. In a real build, "
+            code { "[i18n] static" }
+            " emits one pre-rendered page per language, each with the right "
+            code { "lang" }
+            " and "
+            code { "hreflang" }
+            "."
+        }
+        div class="demo-panel" {
+            div class="demo-panel-head" {
+                span class="dot on" {}
+                span class="demo-panel-title" { "LocaleDemo · setLocale()" }
+            }
+            div class="demo-panel-body" {
+                LocaleDemo {}
+            }
+        }
+    }
+
+    section class="band reveal" {
+        p class="band-eyebrow" { "Why WebCore" }
+        h2 class="band-title" { "One syntax, no boilerplate" }
+        p class="band-sub" {
+            "Replace HTML templates, CSS modules and JS reactivity glue with a single declarative language."
         }
         div class="feature-grid" {
             FeatureCard
                 icon="⚡"
                 title="Tree-shaken runtime"
-                desc="The compiler emits only the JS helpers your document actually uses. Simple apps ship under 1.5 KB of inline script."
+                desc="The compiler emits only the JS helpers your document uses. Simple apps ship under 1.5 KB of inline script."
                 tag="Performance"
             {}
             FeatureCard
                 icon="🦀"
                 title="Rust + PEG parser"
-                desc="A Pest grammar drives a fully-typed AST. Build errors include file, line, column and a source caret."
+                desc="A Pest grammar drives a fully-typed AST. Errors carry file, line, column, a caret and a stable WCxxxx code."
                 tag="Reliability"
             {}
             FeatureCard
                 icon="🔒"
                 title="Scoped CSS"
-                desc="Each component gets a deterministic FNV-1a hash. Styles never leak. No BEM, no CSS modules."
+                desc="Each component gets a deterministic hash. Styles never leak, and scoped CSS matches the component root."
                 tag="Isolation"
             {}
             FeatureCard
                 icon="🌐"
                 title="SPA routing"
-                desc="History API navigation with parameterised routes (/post/:slug). Declare routes in the app block."
+                desc="History API navigation with parameterised routes (/post/:slug) and query params."
                 tag="Routing"
             {}
             FeatureCard
                 icon="🎛️"
                 title="Reactive state"
-                desc="ES2022 private-field State. Computed vars, lifecycle hooks, inter-component events, global store."
+                desc="ES2022 private-field State, computed vars, lifecycle hooks, inter-component events, a global store."
                 tag="Reactivity"
-            {}
-            FeatureCard
-                icon="📦"
-                title="SSG + i18n + WASM"
-                desc="Pre-render initial values, ship translated strings from TOML, and call Rust WASM from any component."
-                tag="Features"
-            {}
-            FeatureCard
-                icon="✨"
-                title="Fine-grained signals"
-                desc="$effect(fn) tracks dependencies automatically. A component only re-renders when its data actually changes."
-                tag="Reactivity"
-            {}
-            FeatureCard
-                icon="🔥"
-                title="HMR — Hot reload"
-                desc="webc serve watches your files and auto-reloads the browser via WebSocket. Zero configuration."
-                tag="DX"
             {}
             FeatureCard
                 icon="🛡️"
                 title="Strict CSP"
-                desc="v3: no unsafe-eval required. Event delegation replaces inline onclick/onsubmit. csp=true emits a Content-Security-Policy meta tag."
-                tag="v3.0"
-            {}
-            FeatureCard
-                icon="🎨"
-                title="Critical CSS inline"
-                desc="In prod mode, page CSS is inlined in <style> and theme.css loads deferred — zero render-blocking CSS."
-                tag="v2.4.0"
-            {}
-            FeatureCard
-                icon="🔀"
-                title="@else if chaining"
-                desc="@if a { } @else if b { } @else { } — native multi-branch conditionals, no wrapper element needed."
-                tag="v3.0"
-            {}
-            FeatureCard
-                icon="🧩"
-                title="Build-time imports"
-                desc="import Button from './Button.webc' — components are inlined at compile time, like C #include. Zero runtime cost."
-                tag="v3.0"
+                desc="Expressions compile to closures — no unsafe-eval. csp=true emits a Content-Security-Policy meta tag."
+                tag="Security"
             {}
         }
     }
 
-    section class="section" {
-        h2 class="section-title" { "Try it live" }
-        p class="section-sub" {
-            "A real "
-            code { "LiveCounter" }
-            " WebCore component — state, computed, "
+    section class="band band-tint reveal" {
+        p class="band-eyebrow" { "Try it" }
+        h2 class="band-title" { "A real reactive component" }
+        p class="band-sub" {
+            "State, computed, "
             code { "@if" }
-            " directive and responsive styles, all compiled to vanilla JS."
+            " and events — compiled to vanilla JS and running right here."
         }
         LiveCounter {}
     }
 
-    section class="section" {
-        h2 class="section-title" { "Get started" }
-        div class="install-steps" {
-            div class="install-step" {
-                span class="step-num" { "1" }
-                div {
-                    strong { "Clone and build the compiler" }
-                    pre class="inline-code" {
-"git clone https://github.com/PrinMeshia/Webcore.git
-cd Webcore/webcore-compiler && cargo build --release"
-                    }
-                }
-            }
-            div class="install-step" {
-                span class="step-num" { "2" }
-                div {
-                    strong { "Scaffold a new project" }
-                    pre class="inline-code" { "./target/release/webcore-compiler new my-app" }
-                }
-            }
-            div class="install-step" {
-                span class="step-num" { "3" }
-                div {
-                    strong { "Start the dev server" }
-                    pre class="inline-code" { "cd my-app && webc serve" }
-                }
-            }
+    section class="band cta-band reveal" {
+        p class="band-eyebrow" { "Get started" }
+        h2 class="band-title" { "Build your first WebCore app" }
+        p class="band-sub" { "Clone the compiler, scaffold a project, and ship a static site in minutes." }
+        div class="cta-actions" {
+            link to="/install" class="btn-hero-primary" { "Install" }
+            link to="/quickstart" class="btn-hero-secondary" { "Quick Start" }
         }
     }
 }

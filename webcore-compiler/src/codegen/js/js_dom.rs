@@ -40,6 +40,9 @@ pub(super) struct RuntimeFeatures {
     pub has_defer: bool,
     /// Any element has a spread attribute `...obj`
     pub has_spread: bool,
+    /// Any component instance carries a `client:idle` / `client:visible`
+    /// partial-hydration directive (islands, #50).
+    pub has_islands: bool,
 }
 
 pub(super) fn detect_features_in_elements(elements: &[Element], f: &mut RuntimeFeatures) {
@@ -136,9 +139,17 @@ pub(super) fn detect_features_in_elements(elements: &[Element], f: &mut RuntimeF
                 f.has_defer = true;
                 detect_features_in_elements(content, f);
             }
-            Element::Component { content, .. }
-            | Element::SlotContent { content, .. }
-            | Element::Fragment { content, .. } => {
+            Element::Component {
+                attributes,
+                content,
+                ..
+            } => {
+                if crate::core::ast::island_strategy(attributes).is_some() {
+                    f.has_islands = true;
+                }
+                detect_features_in_elements(content, f);
+            }
+            Element::SlotContent { content, .. } | Element::Fragment { content, .. } => {
                 detect_features_in_elements(content, f);
             }
             Element::ErrorBlock { content, .. } => {
@@ -180,15 +191,78 @@ pub(super) fn detect_features(document: &WebCoreDocument) -> RuntimeFeatures {
     f
 }
 
-/// Collect on:mount bodies from all components (raw JS to run at `DOMContentLoaded`).
-pub(super) fn collect_on_mount_bodies(document: &WebCoreDocument) -> Vec<String> {
+/// Collect `(component name, on:mount body)` pairs (raw JS). Components with an
+/// empty body are skipped. The name lets the bootstrap defer island components'
+/// mount to hydration time (#50).
+pub(super) fn collect_on_mount_bodies(document: &WebCoreDocument) -> Vec<(String, String)> {
     document
         .components
-        .values()
-        .filter_map(|c| c.mount_body.as_ref())
-        .filter(|b| !b.trim().is_empty())
-        .cloned()
+        .iter()
+        .filter_map(|(name, c)| {
+            c.mount_body
+                .as_ref()
+                .filter(|b| !b.trim().is_empty())
+                .map(|b| (name.clone(), b.clone()))
+        })
         .collect()
+}
+
+/// Component names to defer `on:mount` for (islands, #50): those used
+/// **exclusively** as `client="idle"` / `client="visible"` islands across the
+/// whole (shared-runtime) document. A component that also appears eagerly
+/// anywhere keeps its mount at load — deferring it would drop the mount of its
+/// eager instances (the runtime is shared across all pages).
+pub(super) fn collect_deferred_mount_components(
+    document: &WebCoreDocument,
+) -> std::collections::BTreeSet<String> {
+    use std::collections::BTreeSet;
+    fn walk(elements: &[Element], island: &mut BTreeSet<String>, eager: &mut BTreeSet<String>) {
+        for el in elements {
+            match el {
+                Element::Component {
+                    name,
+                    attributes,
+                    content,
+                    ..
+                } => {
+                    if crate::core::ast::island_strategy(attributes).is_some() {
+                        island.insert(name.clone());
+                    } else {
+                        eager.insert(name.clone());
+                    }
+                    walk(content, island, eager);
+                }
+                Element::Tag { content, .. }
+                | Element::For { content, .. }
+                | Element::SlotContent { content, .. }
+                | Element::ErrorBlock { content, .. }
+                | Element::Fragment { content, .. }
+                | Element::Defer { content, .. } => walk(content, island, eager),
+                Element::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    walk(then_branch, island, eager);
+                    if let Some(eb) = else_branch {
+                        walk(eb, island, eager);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let (mut island, mut eager) = (BTreeSet::new(), BTreeSet::new());
+    for page in document.pages.values() {
+        walk(&page.content, &mut island, &mut eager);
+    }
+    for layout in document.layouts.values() {
+        walk(&layout.content, &mut island, &mut eager);
+    }
+    for comp in document.components.values() {
+        walk(&comp.view, &mut island, &mut eager);
+    }
+    island.difference(&eager).cloned().collect()
 }
 
 /// Collect on:destroy bodies from all components.

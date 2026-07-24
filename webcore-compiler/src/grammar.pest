@@ -80,17 +80,21 @@ media_block = { "@media" ~ media_query ~ "{" ~ style_rule* ~ "}" }
 media_query = @{ (!"{" ~ ANY)+ }
 style_rule = { selector ~ "{" ~ (style_property | nested_rule)* ~ "}" }
 nested_rule = { nested_selector ~ "{" ~ style_property* ~ "}" }
-nested_selector = @{ "&" ~ (ASCII_ALPHANUMERIC | "-" | "_" | "." | "#" | ":" | "[" | "]" | "=" | "\"" | " " | ">" | "+" | "~" | "*" | "(" | ")" | ",")* }
-selector = @{ (ASCII_ALPHANUMERIC | "-" | "_" | "." | "#" | ":" | "[" | "]" | "=" | "\"" | " " | ">" | "+" | "~" | "*" | "(" | ")" | ",")+ }
+// Selectors may span multiple lines (comma-separated lists), so the atomic
+// char class also accepts newlines/tabs (#47). They stop at the opening `{`.
+nested_selector = @{ "&" ~ (ASCII_ALPHANUMERIC | "-" | "_" | "." | "#" | ":" | "[" | "]" | "=" | "\"" | " " | "\t" | "\r" | "\n" | ">" | "+" | "~" | "*" | "(" | ")" | ",")* }
+selector = @{ (ASCII_ALPHANUMERIC | "-" | "_" | "." | "#" | ":" | "[" | "]" | "=" | "\"" | " " | "\t" | "\r" | "\n" | ">" | "+" | "~" | "*" | "(" | ")" | ",")+ }
 style_property = { property_name ~ ":" ~ property_value ~ ";"? }
 property_name = @{ (ASCII_ALPHA | "-")+ }
 property_value = @{ (!(";" | "}") ~ ANY)+ }
 keyframes_block = {
-    "@keyframes" ~ identifier ~
+    "@keyframes" ~ keyframes_name ~
     "{" ~
     keyframe_step* ~
     "}"
 }
+// CSS animation names allow hyphens (e.g. `spin-cw`), unlike WebCore identifiers (#47).
+keyframes_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
 keyframe_step = {
     keyframe_selector ~
     "{" ~ style_property* ~ "}"
