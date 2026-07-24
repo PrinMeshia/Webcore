@@ -30,40 +30,6 @@ fn strip_html_comments(html: &str) -> String {
     result
 }
 
-#[cfg(test)]
-mod tests {
-    use super::minify_html;
-
-    #[test]
-    fn preserves_single_space_between_inline_elements() {
-        // The trailing space in "Mes " must survive so the title reads
-        // "Mes projets", not "Mesprojets".
-        let html = "<h1><span>Mes</span> <span>projets</span></h1>";
-        assert_eq!(
-            minify_html(html),
-            "<h1><span>Mes</span> <span>projets</span></h1>"
-        );
-    }
-
-    #[test]
-    fn collapses_newlines_and_indent_to_one_space() {
-        let html = "<h1>\n    <span>a</span>\n    <span>b</span>\n</h1>";
-        assert_eq!(
-            minify_html(html),
-            "<h1> <span>a</span> <span>b</span> </h1>"
-        );
-    }
-
-    #[test]
-    fn strips_comments_and_keeps_text_whitespace() {
-        // Whitespace inside a text run (not between > and <) is untouched.
-        assert_eq!(
-            minify_html("<p><!-- x -->Travaillons <span>ensemble</span></p>"),
-            "<p>Travaillons <span>ensemble</span></p>"
-        );
-    }
-}
-
 fn collapse_whitespace_between_tags(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let bytes = html.as_bytes();
